@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongotron
+  namespace: mongotron
+  labels:
+    app: mongotron
+    version: v1.0.0
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mongotron
+  template:
+    metadata:
+      labels:
+        app: mongotron
+        version: v1.0.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: mongotron
+        image: mongotron:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        env:
+        - name: MONGOTRON_ENV
+          value: "production"
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: mongotron-secrets
+              key: mongodb-uri
+        - name: TRON_NODE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: mongotron-config
+              key: tron-node-host
+        - name: TRON_NODE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: mongotron-config
+              key: tron-node-port
+        - name: MONGOTRON_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: mongotron-config
+              key: workers
+        resources:
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: mongotron-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - mongotron
+              topologyKey: kubernetes.io/hostname

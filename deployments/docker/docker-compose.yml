@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  mongotron:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: mongotron
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - MONGOTRON_ENV=development
+      - MONGODB_URI=mongodb://mongodb:27017/mongotron
+      - TRON_NODE_HOST=fullnode.tronex.io
+      - TRON_NODE_PORT=50051
+    depends_on:
+      - mongodb
+    networks:
+      - mongotron-network
+    volumes:
+      - ../../configs:/app/configs:ro
+    restart: unless-stopped
+
+  mongodb:
+    image: mongo:6.0
+    container_name: mongotron-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: mongotron
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - mongotron-network
+    restart: unless-stopped
+
+volumes:
+  mongodb-data:
+
+networks:
+  mongotron-network:
+    driver: bridge

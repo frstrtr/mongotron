@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongotron-config
+  namespace: mongotron
+data:
+  tron-node-host: "fullnode.tronex.io"
+  tron-node-port: "50051"
+  workers: "1000"
+  log-level: "info"
+  mongotron.yml: |
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      read_timeout: 30s
+      write_timeout: 30s
+      idle_timeout: 120s
+    
+    database:
+      mongodb:
+        database: "mongotron"
+        collections:
+          addresses: "addresses"
+          transactions: "transactions"
+          events: "events"
+          webhooks: "webhooks"
+    
+    blockchain:
+      tron:
+        node:
+          host: "fullnode.tronex.io"
+          port: 50051
+          use_tls: true
+        connection:
+          timeout: 30s
+          max_retries: 3
+          backoff_interval: 5s
+          keep_alive: 30s
+        monitoring:
+          start_block: "latest"
+          confirmations: 19
+          batch_size: 100
+    
+    worker_pool:
+      workers: 1000
+      queue_size: 100000
+      job_timeout: 60s
+      graceful_shutdown_timeout: 30s
+    
+    logging:
+      level: "info"
+      format: "json"
+      output: "stdout"
+      fields:
+        service: "mongotron"
+        version: "1.0.0"
+    
+    metrics:
+      prometheus:
+        enabled: true
+        port: 9090
+        path: "/metrics"
+    
+    webhooks:
+      delivery:
+        timeout: 30s
+        max_concurrent: 100
+        retry_attempts: 5
+        retry_backoff: "exponential"
+        max_retry_delay: 300s
+    
+    api:
+      rest:
+        enabled: true
+        prefix: "/api/v1"
+        cors:
+          enabled: true
+          allowed_origins: ["*"]
+          allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+          allowed_headers: ["*"]
+      
+      websocket:
+        enabled: true
+        path: "/ws"
+        read_buffer_size: 4096
+        write_buffer_size: 4096
+        handshake_timeout: 10s
+      
+      grpc:
+        enabled: true
+        port: 50051
+        max_recv_msg_size: 4194304
+        max_send_msg_size: 4194304
+    
+    security:
+      rate_limiting:
+        enabled: true
+        requests_per_minute: 1000
+        burst: 100

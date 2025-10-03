@@ -1,0 +1,139 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  max_header_bytes: 1048576
+  
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+
+database:
+  mongodb:
+    uri: "mongodb://localhost:27017"
+    database: "mongotron"
+    options:
+      max_pool_size: 100
+      min_pool_size: 10
+      max_idle_time: 300s
+      connect_timeout: 10s
+      server_selection_timeout: 30s
+    
+    collections:
+      addresses: "addresses"
+      transactions: "transactions"
+      events: "events"
+      webhooks: "webhooks"
+    
+    indexes:
+      auto_create: true
+      background: true
+
+blockchain:
+  tron:
+    node:
+      host: "fullnode.tronex.io"
+      port: 50051
+      use_tls: true
+    
+    connection:
+      timeout: 30s
+      max_retries: 3
+      backoff_interval: 5s
+      keep_alive: 30s
+    
+    monitoring:
+      start_block: "latest"
+      confirmations: 19
+      batch_size: 100
+
+worker_pool:
+  workers: 1000
+  queue_size: 100000
+  job_timeout: 60s
+  graceful_shutdown_timeout: 30s
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+  
+  fields:
+    service: "mongotron"
+    version: "1.0.0"
+  
+  rotation:
+    enabled: false
+    max_size: 100
+    max_age: 30
+    max_backups: 10
+
+metrics:
+  prometheus:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  
+  custom_metrics:
+    - name: "addresses_monitored"
+      type: "gauge"
+      help: "Number of addresses currently being monitored"
+    
+    - name: "events_processed_total"
+      type: "counter"
+      help: "Total number of events processed"
+
+webhooks:
+  delivery:
+    timeout: 30s
+    max_concurrent: 100
+    retry_attempts: 5
+    retry_backoff: "exponential"
+    max_retry_delay: 300s
+  
+  dead_letter:
+    enabled: true
+    max_attempts: 10
+    retention_days: 7
+
+api:
+  rest:
+    enabled: true
+    prefix: "/api/v1"
+    cors:
+      enabled: true
+      allowed_origins: ["*"]
+      allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+      allowed_headers: ["*"]
+  
+  websocket:
+    enabled: true
+    path: "/ws"
+    read_buffer_size: 4096
+    write_buffer_size: 4096
+    handshake_timeout: 10s
+  
+  grpc:
+    enabled: true
+    port: 50051
+    max_recv_msg_size: 4194304
+    max_send_msg_size: 4194304
+
+security:
+  jwt:
+    secret: "your-jwt-secret"
+    expiration: "24h"
+    issuer: "mongotron"
+  
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 1000
+    burst: 100
+  
+  api_keys:
+    enabled: true
+    header: "X-API-Key"
+    required_endpoints: ["/api/v1/subscribe", "/api/v1/unsubscribe"]

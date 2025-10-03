@@ -1,0 +1,78 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+mongotron
+mongotron-cli
+mongotron-migrate
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage*.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# Build artifacts
+build/
+dist/
+bin/
+
+# Dependency directories
+vendor/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+
+# Profiling files
+*.prof
+*_profile.txt
+mem.prof
+cpu.prof
+
+# Temporary files
+tmp/
+temp/
+
+# OS specific
+Thumbs.db
+
+# Docker volumes
+docker-data/
+
+# Kubernetes secrets
+*-secrets.yml
+*.key
+*.pem
+*.crt
+
+# Configuration overrides
+configs/*.local.*
+configs/*-local.*
+
+# Test cache
+.cache/
