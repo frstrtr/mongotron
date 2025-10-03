@@ -101,6 +101,175 @@
 
 ---
 
+## Installation
+
+### Quick Installation (Automated)
+
+The fastest way to get started with MongoTron is using our automated installation script:
+
+```bash
+# Clone the repository
+git clone https://github.com/frstrtr/mongotron.git
+cd mongotron
+
+# Run the automated installer
+./scripts/install-prerequisites.sh
+```
+
+The script will automatically install:
+- ✅ Go 1.24.6
+- ✅ Docker 27.5.1 & Docker Compose 1.29.2
+- ✅ Protocol Buffers compiler (protoc)
+- ✅ Go development tools (golangci-lint, goimports, etc.)
+- ✅ All project dependencies
+- ✅ Optional utilities (jq, tree, htop)
+
+**Installation Options:**
+
+```bash
+# Skip Docker installation (if already installed)
+./scripts/install-prerequisites.sh --skip-docker
+
+# Skip Go installation (if already installed)
+./scripts/install-prerequisites.sh --skip-go
+
+# Skip development tools
+./scripts/install-prerequisites.sh --skip-tools
+
+# Skip project dependencies
+./scripts/install-prerequisites.sh --skip-deps
+
+# Verbose output for debugging
+./scripts/install-prerequisites.sh --verbose
+
+# View help
+./scripts/install-prerequisites.sh --help
+```
+
+**Post-Installation:**
+
+After running the installer, complete these steps:
+
+```bash
+# 1. Reload your shell
+source ~/.bashrc
+
+# 2. Apply Docker group (to use without sudo)
+newgrp docker
+
+# 3. Build MongoTron
+make build
+
+# 4. Run tests
+make test
+
+# 5. Start the service
+make run
+```
+
+📚 **Detailed Documentation**: See [docs/INSTALL_SCRIPT.md](docs/INSTALL_SCRIPT.md) for complete installation guide.
+
+### Manual Installation
+
+If you prefer to install prerequisites manually:
+
+#### Prerequisites
+
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| Go | 1.21+ | Primary programming language |
+| MongoDB | 6.0+ | Document storage |
+| Docker | Latest | Containerization |
+| Docker Compose | Latest | Multi-container orchestration |
+| Protocol Buffers | 3.21+ | gRPC code generation |
+
+#### Step-by-Step Manual Setup
+
+**1. Install Go**
+```bash
+# Ubuntu/Debian (via snap)
+sudo snap install go --classic
+
+# Verify
+go version  # Should show go1.24.6 or higher
+```
+
+**2. Install Docker**
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install -y docker.io docker-compose
+
+# Add user to docker group
+sudo usermod -aG docker $USER
+
+# Start Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
+```
+
+**3. Install Protocol Buffers**
+```bash
+sudo apt install -y protobuf-compiler
+
+# Verify
+protoc --version  # Should show libprotoc 3.21.12 or higher
+```
+
+**4. Install Go Development Tools**
+```bash
+# Ensure GOPATH is set
+export GOPATH=$HOME/go
+export PATH=$PATH:$GOPATH/bin
+
+# Install tools
+go install golang.org/x/tools/cmd/goimports@latest
+go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# Install golangci-lint
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | \
+  sh -s -- -b $(go env GOPATH)/bin v1.55.2
+```
+
+**5. Clone and Build**
+```bash
+# Clone repository
+git clone https://github.com/frstrtr/mongotron.git
+cd mongotron
+
+# Download dependencies
+go mod download
+go mod tidy
+
+# Build
+make build
+```
+
+**6. Configure Environment**
+```bash
+# Copy example config
+cp configs/.env.example configs/.env
+
+# Edit configuration
+vim configs/.env
+```
+
+**7. Run**
+```bash
+# Option A: Run locally
+make run
+
+# Option B: Run with Docker
+make docker-run
+
+# Option C: Run with Docker Compose
+cd deployments/docker
+docker-compose up -d
+```
+
+---
+
 ## Project Directory Structure
 
 ```
