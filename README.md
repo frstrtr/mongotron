@@ -246,16 +246,44 @@ go mod tidy
 make build
 ```
 
-**6. Configure Environment**
+**6. Set Up MongoDB (Production)**
+
+For production deployment with ZFS on NVMe for optimal performance:
+
+```bash
+# See INFRASTRUCTURE.md for complete setup guide
+
+# Quick setup on remote VM:
+# 1. Create ZFS pool on NVMe
+ssh user@your-vm "sudo zpool create -f -o ashift=12 -O compression=lz4 \
+  -O atime=off -O recordsize=16K mongopool /dev/nvme0n1"
+
+# 2. Create MongoDB dataset
+ssh user@your-vm "sudo zfs create -o mountpoint=/var/lib/mongodb \
+  mongopool/mongodb"
+
+# 3. Install MongoDB 7.0+
+ssh user@your-vm "curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | \
+  sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor"
+ssh user@your-vm 'echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] \
+  https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | \
+  sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list'
+ssh user@your-vm "sudo apt update && sudo apt install -y mongodb-org"
+```
+
+**7. Configure Environment**
 ```bash
 # Copy example config
 cp configs/.env.example configs/.env
 
-# Edit configuration
+# Edit configuration with MongoDB connection
 vim configs/.env
+
+# Example MongoDB URI:
+# MONGODB_URI=mongodb://mongotron:password@your-vm.lan:27017/mongotron
 ```
 
-**7. Run**
+**8. Run**
 ```bash
 # Option A: Run locally
 make run
@@ -267,6 +295,8 @@ make docker-run
 cd deployments/docker
 docker-compose up -d
 ```
+
+📚 **Detailed Infrastructure Setup**: See [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) for comprehensive production deployment guide including ZFS optimization, MongoDB configuration, and performance tuning.
 
 ---
 
