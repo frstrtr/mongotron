@@ -17,12 +17,12 @@ import (
 
 // EventRouter routes events to clients (WebSocket and webhook)
 type EventRouter struct {
-	db             *storage.Database
-	logger         *logger.Logger
-	wsClients      map[string][]*WebSocketClient // key: subscription_id
-	eventQueue     chan *RouteEventRequest
-	webhookClient  *http.Client
-	mu             sync.RWMutex
+	db            *storage.Database
+	logger        *logger.Logger
+	wsClients     map[string][]*WebSocketClient // key: subscription_id
+	eventQueue    chan *RouteEventRequest
+	webhookClient *http.Client
+	mu            sync.RWMutex
 }
 
 // RouteEventRequest contains event routing information
@@ -36,14 +36,15 @@ type WebSocketClient struct {
 	ID       string
 	SendChan chan []byte
 	mu       sync.RWMutex
+	closed   bool // Track if channel has been closed
 }
 
 // NewEventRouter creates a new event router
 func NewEventRouter(db *storage.Database, log *logger.Logger) *EventRouter {
 	return &EventRouter{
-		db:        db,
-		logger:    log,
-		wsClients: make(map[string][]*WebSocketClient),
+		db:         db,
+		logger:     log,
+		wsClients:  make(map[string][]*WebSocketClient),
 		eventQueue: make(chan *RouteEventRequest, 1000),
 		webhookClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -204,13 +205,13 @@ func (r *EventRouter) storeEvent(req *RouteEventRequest) {
 		BlockNumber:    req.Event.BlockNumber,
 		BlockTimestamp: req.Event.BlockTimestamp,
 		Data: map[string]interface{}{
-			"from":       req.Event.From,
-			"to":         req.Event.To,
-			"amount":     req.Event.Amount,
-			"asset":      req.Event.AssetName,
-			"success":    req.Event.Success,
-			"eventType":  req.Event.EventType,
-			"eventData":  req.Event.EventData,
+			"from":      req.Event.From,
+			"to":        req.Event.To,
+			"amount":    req.Event.Amount,
+			"asset":     req.Event.AssetName,
+			"success":   req.Event.Success,
+			"eventType": req.Event.EventType,
+			"eventData": req.Event.EventData,
 		},
 		SubscriptionID: req.Subscription.SubscriptionID,
 		Processed:      false,
@@ -252,7 +253,14 @@ func (r *EventRouter) UnregisterClient(subscriptionID string, clientID string) {
 		if client.ID == clientID {
 			// Remove client from slice
 			r.wsClients[subscriptionID] = append(clients[:i], clients[i+1:]...)
-			close(client.SendChan)
+
+			// Safely close the channel only if not already closed
+			client.mu.Lock()
+			if !client.closed {
+				close(client.SendChan)
+				client.closed = true
+			}
+			client.mu.Unlock()
 
 			r.logger.Info().
 				Str("subscriptionId", subscriptionID).

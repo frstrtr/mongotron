@@ -112,8 +112,8 @@ func (m *AddressMonitor) Start() error {
 	m.isRunning = true
 	m.mu.Unlock()
 
-	// If starting from block 0, get current block
-	if m.lastBlockNum == 0 {
+	// If starting from block 0 or negative (use current block)
+	if m.lastBlockNum <= 0 {
 		block, err := m.client.GetNowBlock(m.ctx)
 		if err != nil {
 			return fmt.Errorf("failed to get current block: %w", err)
@@ -353,7 +353,7 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 	// Extract transaction result from txInfo
 	if txInfo != nil {
 		event.Success = txInfo.GetResult() == core.TransactionInfo_SUCESS
-		
+
 		// Extract contract events/logs
 		if len(txInfo.GetLog()) > 0 {
 			event.EventType = "ContractEvent"

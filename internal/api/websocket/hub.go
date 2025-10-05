@@ -128,9 +128,11 @@ func (h *Hub) unregisterClient(client *Client) {
 	for subscriptionID, clients := range h.clients {
 		if _, ok := clients[client]; ok {
 			delete(clients, client)
-			close(client.send)
 
-			// Unregister from event router
+			// Don't close the channel here - let the EventRouter handle it
+			// This prevents "close of closed channel" panic
+
+			// Unregister from event router (which will safely close the channel)
 			h.eventRouter.UnregisterClient(subscriptionID, client.id)
 
 			h.logger.Info().

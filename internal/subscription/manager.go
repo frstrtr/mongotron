@@ -275,10 +275,28 @@ func (m *Manager) stopMonitorUnsafe(wrapper *MonitorWrapper) {
 
 // processEvents processes events from a monitor
 func (m *Manager) processEvents(wrapper *MonitorWrapper) {
+	// Ticker to periodically update current block even without events
+	blockUpdateTicker := time.NewTicker(10 * time.Second)
+	defer blockUpdateTicker.Stop()
+
 	for {
 		select {
 		case <-wrapper.StopChan:
 			return
+
+		case <-blockUpdateTicker.C:
+			// Periodically update current block from monitor
+			if wrapper.Monitor != nil {
+				currentBlock := wrapper.Monitor.GetLastBlockNumber()
+				if currentBlock > wrapper.Subscription.CurrentBlock {
+					m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, wrapper.Subscription.SubscriptionID, currentBlock)
+					wrapper.Subscription.CurrentBlock = currentBlock
+					m.logger.Debug().
+						Str("subscriptionId", wrapper.Subscription.SubscriptionID).
+						Int64("currentBlock", currentBlock).
+						Msg("Updated current block")
+				}
+			}
 
 		case event := <-wrapper.EventChan:
 			// Apply filters
