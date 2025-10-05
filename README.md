@@ -12,6 +12,22 @@
 
 **MongoTron** is a blazingly fast, production-ready microservice designed for real-time monitoring of the Tron blockchain. Built with Go's superior concurrency model and MongoDB's flexible document storage, MongoTron delivers enterprise-grade performance for exchanges, DeFi protocols, and high-frequency wallet applications.
 
+### Deployment Modes
+
+**🖥️ CLI Mode** - Single-user monitoring tool (mongotron-mvp)
+- Direct command-line execution
+- Single address or full block monitoring
+- Perfect for development and testing
+
+**🌐 API Server Mode** - Multi-client subscription service (mongotron-api) ⭐ NEW!
+- REST API + WebSocket streaming
+- Subscription-based monitoring
+- Multiple concurrent clients
+- Webhook notifications
+- Production-ready with rate limiting
+
+See [API_SERVER_README.md](API_SERVER_README.md) for complete API documentation.
+
 ### Key Performance Metrics
 - **🚀 Ultra-Low Latency**: 3-second polling interval for near real-time detection
 - **⚡ High Throughput**: 370+ blocks per minute processing speed

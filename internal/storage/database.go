@@ -20,6 +20,7 @@ type Database struct {
 	AddressRepo          *repositories.AddressRepository
 	TransactionRepo      *repositories.TransactionRepository
 	EventRepo            *repositories.EventRepository
+	SubscriptionRepo     *repositories.SubscriptionRepository
 }
 
 // Config holds database configuration
@@ -72,12 +73,13 @@ func NewDatabase(cfg Config, log *logger.Logger) (*Database, error) {
 
 	// Initialize repositories
 	database := &Database{
-		client:          client,
-		db:              db,
-		logger:          log,
-		AddressRepo:     repositories.NewAddressRepository(db),
-		TransactionRepo: repositories.NewTransactionRepository(db),
-		EventRepo:       repositories.NewEventRepository(db),
+		client:           client,
+		db:               db,
+		logger:           log,
+		AddressRepo:      repositories.NewAddressRepository(db),
+		TransactionRepo:  repositories.NewTransactionRepository(db),
+		EventRepo:        repositories.NewEventRepository(db),
+		SubscriptionRepo: repositories.NewSubscriptionRepository(db, log),
 	}
 
 	return database, nil
@@ -97,6 +99,10 @@ func (d *Database) InitializeIndexes(ctx context.Context) error {
 
 	if err := d.EventRepo.CreateIndexes(ctx); err != nil {
 		return fmt.Errorf("failed to create event indexes: %w", err)
+	}
+
+	if err := d.SubscriptionRepo.CreateIndexes(ctx); err != nil {
+		return fmt.Errorf("failed to create subscription indexes: %w", err)
 	}
 
 	d.logger.Info().Msg("Database indexes created successfully")

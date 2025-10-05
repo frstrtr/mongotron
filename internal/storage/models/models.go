@@ -65,6 +65,31 @@ type Event struct {
 	ExpiresAt      time.Time          `bson:"expires_at,omitempty" json:"expiresAt,omitempty"` // TTL index
 }
 
+// Subscription represents an active monitoring subscription
+type Subscription struct {
+	ID             primitive.ObjectID  `bson:"_id,omitempty" json:"id"`
+	SubscriptionID string              `bson:"subscription_id" json:"subscriptionId"` // sub_abc123
+	Address        string              `bson:"address" json:"address"`
+	Network        string              `bson:"network" json:"network"`
+	WebhookURL     string              `bson:"webhook_url,omitempty" json:"webhookUrl,omitempty"`
+	Filters        SubscriptionFilters `bson:"filters" json:"filters"`
+	Status         string              `bson:"status" json:"status"` // active, paused, stopped
+	EventsCount    int64               `bson:"events_count" json:"eventsCount"`
+	LastEventAt    *time.Time          `bson:"last_event_at,omitempty" json:"lastEventAt,omitempty"`
+	StartBlock     int64               `bson:"start_block" json:"startBlock"`
+	CurrentBlock   int64               `bson:"current_block" json:"currentBlock"`
+	CreatedAt      time.Time           `bson:"created_at" json:"createdAt"`
+	UpdatedAt      time.Time           `bson:"updated_at" json:"updatedAt"`
+}
+
+// SubscriptionFilters defines filtering rules for subscriptions
+type SubscriptionFilters struct {
+	ContractTypes []string `bson:"contract_types,omitempty" json:"contractTypes,omitempty"`
+	MinAmount     int64    `bson:"min_amount,omitempty" json:"minAmount,omitempty"`
+	MaxAmount     int64    `bson:"max_amount,omitempty" json:"maxAmount,omitempty"`
+	OnlySuccess   bool     `bson:"only_success" json:"onlySuccess"`
+}
+
 // Webhook represents a webhook configuration
 type Webhook struct {
 	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
