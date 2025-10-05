@@ -298,8 +298,11 @@ func (m *BlockMonitor) extractTransactionData(ctx context.Context, block *core.B
 		return nil, fmt.Errorf("invalid transaction")
 	}
 
-	txRaw := tx.GetRawData()
-	txID := hex.EncodeToString(txRaw.GetRefBlockHash())
+	// Calculate the correct transaction ID (SHA256 of raw transaction data)
+	txID := m.parser.CalculateTransactionID(tx)
+	if txID == "" {
+		return nil, fmt.Errorf("failed to calculate transaction ID")
+	}
 
 	// Get transaction info (includes events, logs, receipt)
 	txInfoCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -322,6 +325,8 @@ func (m *BlockMonitor) extractTransactionData(ctx context.Context, block *core.B
 		Success:        true,
 		ContractData:   make(map[string]interface{}),
 	}
+
+	txRaw := tx.GetRawData()
 
 	// Extract contract details
 	if len(txRaw.GetContract()) > 0 {

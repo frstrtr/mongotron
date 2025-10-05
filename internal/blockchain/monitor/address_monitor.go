@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fbsobreira/gotron-sdk/pkg/common"
 	"github.com/fbsobreira/gotron-sdk/pkg/proto/core"
 	"github.com/frstrtr/mongotron/internal/blockchain/client"
 	"github.com/frstrtr/mongotron/internal/blockchain/parser"
@@ -247,9 +248,10 @@ func (m *AddressMonitor) processBlock(blockNum int64) error {
 		if m.isAddressInTransaction(tx) {
 			event, err := m.extractEvent(block, tx)
 			if err != nil {
+				txID := m.parser.CalculateTransactionID(tx)
 				m.logger.Error().
 					Err(err).
-					Str("txID", hex.EncodeToString(tx.GetRawData().GetRefBlockHash())).
+					Str("txID", txID).
 					Msg("Error extracting event from transaction")
 				continue
 			}
@@ -305,8 +307,11 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 		return nil, fmt.Errorf("invalid transaction")
 	}
 
-	txRaw := tx.GetRawData()
-	txID := hex.EncodeToString(txRaw.GetRefBlockHash())
+	// Calculate the correct transaction ID (SHA256 of raw transaction data)
+	txID := m.parser.CalculateTransactionID(tx)
+	if txID == "" {
+		return nil, fmt.Errorf("failed to calculate transaction ID")
+	}
 
 	// Get transaction info (includes events, logs, receipt)
 	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
@@ -330,6 +335,8 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 		Success:         true,
 		EventData:       make(map[string]interface{}),
 	}
+
+	txRaw := tx.GetRawData()
 
 	// Extract transaction details
 	if len(txRaw.GetContract()) > 0 {
@@ -368,8 +375,15 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 
 // addressToHex converts a Tron base58 address to hex format
 func (m *AddressMonitor) addressToHex(address string) string {
-	// For now, return the address as-is
-	// In production, you'd want proper base58 to hex conversion
-	// using Tron's address utilities
-	return address
+	if address == "" {
+		return ""
+	}
+	// Decode base58 address to raw bytes
+	decoded, err := common.DecodeCheck(address)
+	if err != nil {
+		m.logger.Error().Err(err).Str("address", address).Msg("Failed to decode base58 address")
+		return ""
+	}
+	// Convert to hex string
+	return hex.EncodeToString(decoded)
 }

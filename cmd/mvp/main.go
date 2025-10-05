@@ -214,6 +214,7 @@ func main() {
 		startBlock   = flag.Int64("start-block", 0, "Block number to start from (0 = current)")
 		monitorMode  = flag.Bool("monitor", false, "Monitor all addresses in blocks (comprehensive mode)")
 		verboseMode  = flag.Bool("verbose", false, "Display detailed information about parsed and stored data")
+		showBlock    = flag.Bool("show-block", false, "Display block number during address monitoring")
 	)
 	flag.Parse()
 
@@ -322,12 +323,12 @@ func main() {
 		runComprehensiveMonitor(ctx, tronClient, db, log, *startBlock, *verboseMode)
 	} else {
 		// Single address monitoring mode
-		runSingleAddressMonitor(ctx, tronClient, db, log, *watchAddress, *startBlock, *verboseMode)
+		runSingleAddressMonitor(ctx, tronClient, db, log, *watchAddress, *startBlock, *verboseMode, *showBlock)
 	}
 }
 
 // runSingleAddressMonitor runs the original single-address monitoring
-func runSingleAddressMonitor(ctx context.Context, tronClient *client.TronClient, db *storage.Database, log *logger.Logger, watchAddress string, startBlock int64, verbose bool) {
+func runSingleAddressMonitor(ctx context.Context, tronClient *client.TronClient, db *storage.Database, log *logger.Logger, watchAddress string, startBlock int64, verbose bool, showBlock bool) {
 	// Register the address in the database
 	log.Info().Msg("Registering watched address in database")
 	existingAddr, err := db.AddressRepo.FindByAddress(ctx, watchAddress)
@@ -376,10 +377,35 @@ func runSingleAddressMonitor(ctx context.Context, tronClient *client.TronClient,
 	log.Info().
 		Str("address", watchAddress).
 		Int64("startBlock", startBlock).
+		Bool("showBlock", showBlock).
 		Msg("MongoTron MVP started successfully - watching for events")
 
 	// Process events from monitor
-	go processEvents(ctx, addrMonitor, db, log, verbose)
+	go processEvents(ctx, addrMonitor, db, log, verbose, showBlock)
+
+	// If show-block is enabled, start a goroutine to track block progress
+	if showBlock {
+		go func() {
+			lastReported := int64(-1)
+			ticker := time.NewTicker(500 * time.Millisecond) // Check twice per second
+			defer ticker.Stop()
+			
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					currentBlock := addrMonitor.GetLastBlockNumber()
+					if currentBlock > lastReported {
+						log.Info().
+							Int64("block", currentBlock).
+							Msg("Processing block")
+						lastReported = currentBlock
+					}
+				}
+			}
+		}()
+	}
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
@@ -474,7 +500,7 @@ func runComprehensiveMonitor(ctx context.Context, tronClient *client.TronClient,
 }
 
 // processEvents processes events from the address monitor and stores them in MongoDB
-func processEvents(ctx context.Context, mon *monitor.AddressMonitor, db *storage.Database, log *logger.Logger, verbose bool) {
+func processEvents(ctx context.Context, mon *monitor.AddressMonitor, db *storage.Database, log *logger.Logger, verbose bool, showBlock bool) {
 	for event := range mon.Events() {
 		if err := storeEvent(ctx, event, db, log, verbose); err != nil {
 			log.Error().

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 
@@ -238,6 +239,25 @@ func (p *TronParser) DecodeAddress(hexAddress string) ([]byte, error) {
 func (p *TronParser) FormatAmount(sun int64) string {
 	trx := float64(sun) / 1_000_000
 	return fmt.Sprintf("%.6f TRX", trx)
+}
+
+// CalculateTransactionID calculates the transaction ID from a transaction
+// Transaction ID = SHA256(RawData)
+func (p *TronParser) CalculateTransactionID(tx *core.Transaction) string {
+	if tx == nil || tx.GetRawData() == nil {
+		return ""
+	}
+
+	// Serialize the raw transaction data
+	rawBytes, err := proto.Marshal(tx.GetRawData())
+	if err != nil {
+		p.logger.Error().Err(err).Msg("Failed to marshal transaction raw data")
+		return ""
+	}
+
+	// Calculate SHA256 hash
+	hash := sha256.Sum256(rawBytes)
+	return hex.EncodeToString(hash[:])
 }
 
 // ParseInternalTransactions extracts internal transactions from transaction info
