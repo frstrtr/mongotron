@@ -1,63 +1,173 @@
 # MongoTron 🚀
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://golang.org/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-6.0+-47A248?style=flat&logo=mongodb)](https://www.mongodb.com/)
+[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://golang.org/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-7.0+-47A248?style=flat&logo=mongodb)](https://www.mongodb.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker)](https://www.docker.com/)
 [![Tron](https://img.shields.io/badge/Tron-Blockchain-FF061E?style=flat&logo=tron)](https://tron.network/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen)]()
-[![Performance](https://img.shields.io/badge/Latency-%3C1ms-brightgreen)]()
-[![Concurrency](https://img.shields.io/badge/Concurrent_Addresses-50K%2B-yellow)]()
+[![Performance](https://img.shields.io/badge/Processing-370+_blocks%2Fmin-brightgreen)]()
 
 ## Overview
 
 **MongoTron** is a blazingly fast, production-ready microservice designed for real-time monitoring of the Tron blockchain. Built with Go's superior concurrency model and MongoDB's flexible document storage, MongoTron delivers enterprise-grade performance for exchanges, DeFi protocols, and high-frequency wallet applications.
 
 ### Key Performance Metrics
-- **🚀 Ultra-Low Latency**: 1-3 second event detection, sub-millisecond internal processing
-- **⚡ High Concurrency**: 50,000+ concurrent address monitoring with Go goroutines
-- **💾 Memory Efficient**: ~1KB memory usage per monitored address
-- **📈 Horizontally Scalable**: Stateless design for seamless load balancing
-- **🔧 Single Binary**: Deploy anywhere with zero dependencies
+- **🚀 Ultra-Low Latency**: 3-second polling interval for near real-time detection
+- **⚡ High Throughput**: 370+ blocks per minute processing speed
+- **💾 Memory Efficient**: Smart ABI caching with minimal memory overhead
+- **📊 Comprehensive Data**: Full transaction decoding with 50+ Tron contract types
+- **� Smart Contract Decoding**: Automatic ABI fetching and method decoding
+- **🔧 Single Binary**: 27MB standalone executable with zero dependencies
+
+### Current MVP Status ✅
+**MongoTron MVP v0.1.0** - Fully functional with dual-mode monitoring:
+- ✅ Single address monitoring with event tracking
+- ✅ Comprehensive block monitoring (all addresses)
+- ✅ Verbose logging with Base58 address display
+- ✅ Smart contract ABI decoder with 60+ common method signatures
+- ✅ Dual transaction type logging (Native + Smart Contract)
+- ✅ 50+ Tron contract types supported
+- ✅ MongoDB integration with full data persistence
 
 ### Technology Stack
-- **Backend**: Go 1.21+ (Goroutines, Channels, Worker Pools)
-- **Database**: MongoDB 6.0+ (Document Storage, Indexing, Aggregation)
-- **Node Communication**: gRPC (High-throughput Tron node connectivity)
-- **Containerization**: Docker & Docker Compose
-- **APIs**: REST, WebSocket, Webhooks with exponential backoff retry
+- **Backend**: Go 1.24.0 (Goroutines, Channels, Concurrent Processing)
+- **Database**: MongoDB 7.0.25 (Document Storage, Indexing)
+- **Node Communication**: gRPC (Tron node connectivity via fbsobreira/gotron-sdk v0.24.1)
+- **Smart Contracts**: ethereum/go-ethereum (ABI parsing and decoding)
+- **Logging**: zerolog (Structured JSON logging)
 
 ---
 
 ## Core Features
 
-### 🔥 Performance & Concurrency
-- **Goroutine-Based Architecture**: Native Go concurrency for 50K+ simultaneous address monitors
-- **Worker Pool Pattern**: Configurable worker pools for optimal resource utilization
-- **Channel-Based Communication**: Lock-free inter-goroutine messaging
-- **Memory Pool Management**: Efficient memory allocation and garbage collection optimization
-- **Connection Pooling**: Persistent gRPC connections with automatic reconnection
+### 🔥 Dual-Mode Monitoring
+- **Single Address Mode** (`--address`): Monitor specific wallet activity
+  - Real-time event detection for incoming/outgoing transactions
+  - Transaction history with full decoding
+  - Smart contract interaction tracking
+  
+- **Comprehensive Block Mode** (`--monitor`): Monitor entire blockchain
+  - All addresses in every block
+  - Complete transaction data extraction
+  - 370+ blocks per minute processing
+  - Configurable start block
 
-### 📡 Real-Time Monitoring Features
-- **Block-by-Block Processing**: Real-time transaction detection as blocks are confirmed
-- **State Comparison Engine**: Intelligent diff detection for balance and state changes
-- **Batch Processing**: Configurable batch sizes for optimal throughput
-- **Event Filtering**: Advanced filters for transaction types, amounts, and addresses
-- **Multi-Address Monitoring**: Bulk subscription management with hierarchical grouping
+### 📡 Smart Contract Decoding
+- **Automatic ABI Fetching**: Retrieves contract ABIs from Tron network
+- **ABI Caching**: In-memory caching for improved performance
+- **60+ Common Method Signatures**: Fallback for contracts without ABIs
+  - ERC20: transfer, approve, transferFrom, mint, burn
+  - DEX: swap variants, addLiquidity, removeLiquidity
+  - Staking: stake, unstake, claim, getReward
+  - NFT: safeTransferFrom, burn, ownerOf
+- **Human-Readable Output**: "Token Transfer" instead of "0xa9059cbb"
 
-### 🌐 API & Integration Layer
-- **RESTful API**: Complete CRUD operations for address subscriptions and configurations
-- **WebSocket Streaming**: Real-time event streaming with automatic reconnection
-- **Webhook Delivery**: Reliable event delivery with exponential backoff and dead letter queues
-- **gRPC Internal API**: High-performance internal service communication
-- **Rate Limiting**: Configurable rate limits per client and endpoint
+### 🌐 Enhanced Logging System
+- **Dual Transaction Type Display**:
+  - **TronTXType**: Native blockchain transaction type (always shown)
+  - **SCTXType**: Decoded smart contract interaction type (when available)
+- **Base58 Address Format**: Human-readable Tron addresses
+- **Verbose Mode** (`--verbose`): Detailed parsing and storage logs
+- **Structured JSON**: Easy integration with log aggregators
 
-### 💽 Data & Storage Management
+---
+
+## Quick Start (MVP)
+
+MongoTron MVP is ready to use! Here's how to get started:
+
+### Build the MVP
+
+```bash
+# Clone the repository
+git clone https://github.com/frstrtr/mongotron.git
+cd mongotron
+
+# Install dependencies
+go mod download
+
+# Build the MVP binary
+go build -o bin/mongotron-mvp ./cmd/mvp/main.go
+```
+
+### Run Examples
+
+**Monitor a Single Address:**
+```bash
+./bin/mongotron-mvp --address=TMCwUb3kxj7BFvmuxRntq6YfDEi9FeDy4M --verbose
+```
+
+**Monitor All Addresses (Comprehensive Block Mode):**
+```bash
+./bin/mongotron-mvp --monitor --verbose --start-block=0
+```
+
+**Monitor from Specific Block:**
+```bash
+./bin/mongotron-mvp --monitor --start-block=61082220
+```
+
+### Sample Output
+
+```
+4:51PM INF Transaction in block TronTXType="Transfer (TRX)" amount=39137 
+       contractType=TransferContract 
+       from=TMCwUb3kxj7BFvmuxRntq6YfDEi9FeDy4M 
+       to=TCxqcZtbq3hijr7MEoTRqSYZd1jGGmJBt9 
+       success=true txHash=776e8f2ed24a50ec
+
+4:51PM INF Transaction in block TronTXType="Smart Contract" SCTXType="Token Transfer"
+       amount=0 contractType=TriggerSmartContract 
+       from=TQ3YZ56STTXqe3MmcZcitPkBWDGcU7EcAh 
+       to=TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf 
+       success=true txHash=6b5f8e040f20d9a0
+```
+
+### Configuration
+
+The MVP connects to:
+- **MongoDB**: `nileVM.lan:27017` (database: `mongotron`)
+- **Tron Node**: `nileVM.lan:50051` (Nile Testnet v4.8.0)
+
+Update these in the code if using different endpoints.
+
+### Supported Transaction Types
+
+The MVP recognizes and decodes:
+
+**Native Tron Types (TronTXType):**
+- Transfer (TRX), Transfer (TRC10)
+- Smart Contract, Vote Witness
+- Delegate Resource, Undelegate Resource
+- Stake (v2), Unstake (v2)
+- Create Account, Update Account
+- And 40+ more...
+
+**Smart Contract Types (SCTXType):**
+- Token Transfer, Token Approve, Token Transfer From
+- Swap Exact Tokens, Add Liquidity, Remove Liquidity
+- Stake Tokens, Unstake Tokens, Claim Rewards
+- NFT Transfer, NFT Burn, NFT Approve
+- And 50+ more...
+
+---
+
+## Full Architecture & Roadmap
+
+### 💽 Planned Data & Storage Management
 - **MongoDB Integration**: Optimized document schemas with compound indexing
 - **State Persistence**: Reliable checkpoint management for service restarts
 - **Data Archival**: Configurable data retention with automated cleanup
 - **Index Optimization**: Dynamic index creation based on query patterns
 - **Backup Integration**: Seamless integration with MongoDB backup strategies
+
+### 🌐 Planned API Layer
+- **RESTful API**: Complete CRUD operations for address subscriptions and configurations
+- **WebSocket Streaming**: Real-time event streaming with automatic reconnection
+- **Webhook Delivery**: Reliable event delivery with exponential backoff and dead letter queues
+- **gRPC Internal API**: High-performance internal service communication
+- **Rate Limiting**: Configurable rate limits per client and endpoint
 
 ---
 

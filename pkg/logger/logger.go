@@ -7,6 +7,9 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// Logger is an alias for zerolog.Logger for convenience
+type Logger = zerolog.Logger
+
 // New creates a new structured logger
 func New(cfg config.LoggingConfig) zerolog.Logger {
 	// Set global log level
@@ -34,4 +37,11 @@ func New(cfg config.LoggingConfig) zerolog.Logger {
 	}
 
 	return logger
+}
+
+// NewDefault creates a logger with default console output
+func NewDefault() zerolog.Logger {
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	output := zerolog.ConsoleWriter{Out: os.Stdout}
+	return zerolog.New(output).With().Timestamp().Logger()
 }
