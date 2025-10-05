@@ -1,20 +1,35 @@
 package handlers
 
 import (
-	"github.com/frstrtr/mongotron/internal/storage"
+	"context"
+
 	"github.com/frstrtr/mongotron/internal/storage/models"
 	"github.com/gofiber/fiber/v2"
 )
 
+// EventRepositoryInterface defines the methods needed from event repository
+type EventRepositoryInterface interface {
+	FindByEventID(ctx context.Context, eventID string) (*models.Event, error)
+	FindByAddress(ctx context.Context, address string, limit, skip int64) ([]*models.Event, error)
+	FindByTxHash(ctx context.Context, txHash string) ([]*models.Event, error)
+	List(ctx context.Context, limit, skip int64) ([]*models.Event, error)
+	Count(ctx context.Context) (int64, error)
+}
+
+// EventDatabaseInterface defines the database interface for EventHandler
+type EventDatabaseInterface interface {
+	GetEventRepo() EventRepositoryInterface
+}
+
 // EventHandler handles event-related HTTP requests
 type EventHandler struct {
-	db *storage.Database
+	eventRepo EventRepositoryInterface
 }
 
 // NewEventHandler creates a new event handler
-func NewEventHandler(db *storage.Database) *EventHandler {
+func NewEventHandler(eventRepo EventRepositoryInterface) *EventHandler {
 	return &EventHandler{
-		db: db,
+		eventRepo: eventRepo,
 	}
 }
 
@@ -58,9 +73,9 @@ func (h *EventHandler) ListEvents(c *fiber.Ctx) error {
 	var err error
 
 	if address != "" {
-		events, err = h.db.EventRepo.FindByAddress(c.Context(), address, int64(limit), int64(skip))
+		events, err = h.eventRepo.FindByAddress(c.Context(), address, int64(limit), int64(skip))
 	} else {
-		events, err = h.db.EventRepo.List(c.Context(), int64(limit), int64(skip))
+		events, err = h.eventRepo.List(c.Context(), int64(limit), int64(skip))
 	}
 
 	if err != nil {
@@ -71,7 +86,7 @@ func (h *EventHandler) ListEvents(c *fiber.Ctx) error {
 	}
 
 	// Get total count
-	total, err := h.db.EventRepo.Count(c.Context())
+	total, err := h.eventRepo.Count(c.Context())
 	if err != nil {
 		total = 0
 	}
@@ -99,7 +114,7 @@ func (h *EventHandler) GetEvent(c *fiber.Ctx) error {
 		})
 	}
 
-	event, err := h.db.EventRepo.FindByEventID(c.Context(), eventID)
+	event, err := h.eventRepo.FindByEventID(c.Context(), eventID)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(ErrorResponse{
 			Error:   "event_not_found",
@@ -120,7 +135,7 @@ func (h *EventHandler) GetEventByTransactionHash(c *fiber.Ctx) error {
 		})
 	}
 
-	events, err := h.db.EventRepo.FindByTxHash(c.Context(), txHash)
+	events, err := h.eventRepo.FindByTxHash(c.Context(), txHash)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
 			Error:   "query_failed",

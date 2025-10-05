@@ -1,135 +1,114 @@
-.PHONY: all build test clean docker run help
+.PHONY: help build test test-unit test-integration test-coverage test-bench clean run-api run-cli
 
 # Variables
 PROJECT_NAME := mongotron
 VERSION := 1.0.0
-BUILD_DIR := ./build
-BIN_DIR := $(BUILD_DIR)/bin
-DOCKER_IMAGE := $(PROJECT_NAME):$(VERSION)
 
 # Default target
-all: clean build test
-
-# Help target
 help:
-	@echo "MongoTron Makefile Commands:"
-	@echo "  make build         - Build all binaries"
-	@echo "  make test          - Run all tests"
-	@echo "  make test-unit     - Run unit tests only"
-	@echo "  make test-integration - Run integration tests only"
-	@echo "  make benchmark     - Run performance benchmarks"
-	@echo "  make lint          - Run linters"
-	@echo "  make format        - Format code"
-	@echo "  make docker-build  - Build Docker image"
-	@echo "  make docker-run    - Run Docker container"
-	@echo "  make docker-push   - Push Docker image"
-	@echo "  make deploy-dev    - Deploy to development"
-	@echo "  make deploy-prod   - Deploy to production"
-	@echo "  make clean         - Clean build artifacts"
-	@echo "  make run           - Run the application locally"
+	@echo "MongoTron - Makefile Commands"
+	@echo ""
+	@echo "Build Commands:"
+	@echo "  make build-api        - Build API server binary"
+	@echo "  make build-cli        - Build CLI binary"
+	@echo "  make build-all        - Build both binaries"
+	@echo ""
+	@echo "Test Commands:"
+	@echo "  make test             - Run all unit tests"
+	@echo "  make test-unit        - Run unit tests"
+	@echo "  make test-integration - Run integration tests (requires API server)"
+	@echo "  make test-coverage    - Run tests with coverage report"
+	@echo "  make test-bench       - Run benchmark tests"
+	@echo "  make test-verbose     - Run tests with verbose output"
+	@echo ""
+	@echo "Run Commands:"
+	@echo "  make run-api          - Run API server"
+	@echo "  make run-cli          - Run CLI monitor"
+	@echo ""
+	@echo "Utility Commands:"
+	@echo "  make clean            - Remove build artifacts"
+	@echo "  make deps             - Install dependencies"
+	@echo "  make fmt              - Format code"
+	@echo "  make lint             - Run linter"
+	@echo ""
 
 # Build targets
-build:
-	@echo "Building $(PROJECT_NAME)..."
-	@./scripts/build.sh
+build-api:
+	@echo "Building API server..."
+	@go build -o bin/mongotron-api cmd/api-server/main.go
+	@echo "✅ API server built: bin/mongotron-api"
+
+build-cli:
+	@echo "Building CLI..."
+	@go build -o bin/mongotron-mvp cmd/mvp/main.go
+	@echo "✅ CLI built: bin/mongotron-mvp"
+
+build-all: build-api build-cli
+	@echo "✅ All binaries built"
 
 # Test targets
-test:
-	@echo "Running tests..."
-	@./scripts/test.sh
+test: test-unit
+	@echo "✅ All tests passed"
 
 test-unit:
 	@echo "Running unit tests..."
-	@go test -v -race ./tests/unit/...
+	@./run_tests.sh unit
 
 test-integration:
 	@echo "Running integration tests..."
-	@go test -v -race ./tests/integration/...
+	@./run_tests.sh integration
 
-test-e2e:
-	@echo "Running end-to-end tests..."
-	@go test -v -race ./tests/e2e/...
+test-coverage:
+	@echo "Running tests with coverage..."
+	@./run_tests.sh coverage
 
-# Benchmark target
-benchmark:
-	@echo "Running benchmarks..."
-	@./scripts/benchmark.sh
+test-bench:
+	@echo "Running benchmark tests..."
+	@./run_tests.sh bench
 
-# Code quality targets
-lint:
-	@echo "Running linters..."
-	@golangci-lint run ./...
+test-verbose:
+	@echo "Running tests (verbose)..."
+	@./run_tests.sh unit -v
 
-format:
-	@echo "Formatting code..."
-	@gofmt -s -w .
-	@goimports -w .
+# Run targets
+run-api: build-api
+	@echo "Starting API server..."
+	@./bin/mongotron-api
 
-# Docker targets
-docker-build:
-	@echo "Building Docker image..."
-	@docker build -t $(DOCKER_IMAGE) -f deployments/docker/Dockerfile .
+run-cli: build-cli
+	@echo "Starting CLI monitor..."
+	@./bin/mongotron-mvp --address TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf
 
-docker-run:
-	@echo "Running Docker container..."
-	@docker-compose -f deployments/docker/docker-compose.yml up
-
-docker-run-prod:
-	@echo "Running production Docker containers..."
-	@docker-compose -f deployments/docker/docker-compose.prod.yml up -d
-
-docker-push:
-	@echo "Pushing Docker image..."
-	@docker push $(DOCKER_IMAGE)
-
-docker-stop:
-	@echo "Stopping Docker containers..."
-	@docker-compose -f deployments/docker/docker-compose.yml down
-
-# Deployment targets
-deploy-dev:
-	@echo "Deploying to development..."
-	@./scripts/deploy.sh development docker
-
-deploy-prod:
-	@echo "Deploying to production..."
-	@./scripts/deploy.sh production kubernetes
-
-# Run target
-run:
-	@echo "Running $(PROJECT_NAME) locally..."
-	@go run ./cmd/mongotron/main.go
-
-# Database migration targets
-migrate-up:
-	@echo "Running database migrations..."
-	@go run ./cmd/migrate/main.go -d up
-
-migrate-down:
-	@echo "Rolling back database migrations..."
-	@go run ./cmd/migrate/main.go -d down
-
-# Clean target
+# Utility targets
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -rf $(BUILD_DIR)
-	@rm -f coverage*.txt coverage.html
-	@rm -f *.prof *_profile.txt
+	@rm -rf bin/*
+	@rm -f coverage.out coverage.html
+	@echo "✅ Clean complete"
 
-# Dependencies
 deps:
 	@echo "Installing dependencies..."
 	@go mod download
 	@go mod tidy
+	@echo "✅ Dependencies installed"
 
-# Generate targets
-generate:
-	@echo "Running go generate..."
-	@go generate ./...
+fmt:
+	@echo "Formatting code..."
+	@go fmt ./...
+	@echo "✅ Code formatted"
 
-# Protocol buffer generation
-proto:
-	@echo "Generating protobuf files..."
-	@protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		api/proto/*.proto
+lint:
+	@echo "Running linter..."
+	@golangci-lint run ./... || echo "⚠️  Install golangci-lint: https://golangci-lint.run/usage/install/"
+
+# Development targets
+dev-setup: deps
+	@echo "Setting up development environment..."
+	@chmod +x run_tests.sh
+	@chmod +x test_api.sh
+	@chmod +x test_websocket.js
+	@echo "✅ Development environment ready"
+
+# Quick test-and-build workflow
+quick: clean build-all test
+	@echo "✅ Quick build and test complete"

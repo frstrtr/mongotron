@@ -8,11 +8,11 @@ import (
 
 // SubscriptionHandler handles subscription-related HTTP requests
 type SubscriptionHandler struct {
-	manager *subscription.Manager
+	manager subscription.ManagerInterface
 }
 
 // NewSubscriptionHandler creates a new subscription handler
-func NewSubscriptionHandler(manager *subscription.Manager) *SubscriptionHandler {
+func NewSubscriptionHandler(manager subscription.ManagerInterface) *SubscriptionHandler {
 	return &SubscriptionHandler{
 		manager: manager,
 	}
@@ -20,10 +20,10 @@ func NewSubscriptionHandler(manager *subscription.Manager) *SubscriptionHandler 
 
 // CreateSubscriptionRequest represents a subscription creation request
 type CreateSubscriptionRequest struct {
-	Address    string                      `json:"address" validate:"required"`
-	WebhookURL string                      `json:"webhookUrl,omitempty"`
-	Filters    models.SubscriptionFilters  `json:"filters"`
-	StartBlock int64                       `json:"startBlock,omitempty"`
+	Address    string                     `json:"address" validate:"required"`
+	WebhookURL string                     `json:"webhookUrl,omitempty"`
+	Filters    models.SubscriptionFilters `json:"filters"`
+	StartBlock int64                      `json:"startBlock,omitempty"`
 }
 
 // SubscriptionResponse represents a subscription in API responses

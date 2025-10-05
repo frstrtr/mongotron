@@ -9,12 +9,12 @@ import (
 
 // HealthHandler handles health check requests
 type HealthHandler struct {
-	manager *subscription.Manager
+	manager subscription.ManagerInterface
 	version string
 }
 
 // NewHealthHandler creates a new health handler
-func NewHealthHandler(manager *subscription.Manager, version string) *HealthHandler {
+func NewHealthHandler(manager subscription.ManagerInterface, version string) *HealthHandler {
 	return &HealthHandler{
 		manager: manager,
 		version: version,
@@ -23,12 +23,12 @@ func NewHealthHandler(manager *subscription.Manager, version string) *HealthHand
 
 // HealthResponse represents health check response
 type HealthResponse struct {
-	Status          string `json:"status"`
-	Version         string `json:"version"`
-	Timestamp       int64  `json:"timestamp"`
-	ActiveMonitors  int    `json:"activeMonitors"`
-	ConnectedClients int   `json:"connectedClients,omitempty"`
-	Uptime          int64  `json:"uptime,omitempty"`
+	Status           string `json:"status"`
+	Version          string `json:"version"`
+	Timestamp        int64  `json:"timestamp"`
+	ActiveMonitors   int    `json:"activeMonitors"`
+	ConnectedClients int    `json:"connectedClients,omitempty"`
+	Uptime           int64  `json:"uptime,omitempty"`
 }
 
 var startTime = time.Now()
@@ -57,7 +57,7 @@ func (h *HealthHandler) ReadinessCheck(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"status": "ready",
+		"status":    "ready",
 		"timestamp": time.Now().Unix(),
 	})
 }
@@ -65,7 +65,7 @@ func (h *HealthHandler) ReadinessCheck(c *fiber.Ctx) error {
 // LivenessCheck handles GET /api/v1/live
 func (h *HealthHandler) LivenessCheck(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
-		"status": "alive",
+		"status":    "alive",
 		"timestamp": time.Now().Unix(),
 	})
 }

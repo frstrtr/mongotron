@@ -58,12 +58,12 @@ func main() {
 
 	// Initialize Tron client
 	tronCfg := client.Config{
-		Host:           cfg.Blockchain.Tron.Node.Host,
-		Port:           cfg.Blockchain.Tron.Node.Port,
-		Timeout:        cfg.Blockchain.Tron.Connection.Timeout,
-		MaxRetries:     cfg.Blockchain.Tron.Connection.MaxRetries,
+		Host:            cfg.Blockchain.Tron.Node.Host,
+		Port:            cfg.Blockchain.Tron.Node.Port,
+		Timeout:         cfg.Blockchain.Tron.Connection.Timeout,
+		MaxRetries:      cfg.Blockchain.Tron.Connection.MaxRetries,
 		BackoffInterval: cfg.Blockchain.Tron.Connection.BackoffInterval,
-		KeepAlive:      cfg.Blockchain.Tron.Connection.KeepAlive,
+		KeepAlive:       cfg.Blockchain.Tron.Connection.KeepAlive,
 	}
 	tronClient, err := client.NewTronClient(tronCfg, &log)
 	if err != nil {
@@ -112,7 +112,7 @@ func main() {
 		},
 		LimitReached: func(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error": "rate_limit_exceeded",
+				"error":   "rate_limit_exceeded",
 				"message": "Too many requests, please try again later",
 			})
 		},
@@ -120,7 +120,7 @@ func main() {
 
 	// Initialize handlers
 	subscriptionHandler := handlers.NewSubscriptionHandler(manager)
-	eventHandler := handlers.NewEventHandler(db)
+	eventHandler := handlers.NewEventHandler(db.EventRepo)
 	healthHandler := handlers.NewHealthHandler(manager, version)
 	wsHandler := handlers.NewWebSocketHandler(hub, manager)
 

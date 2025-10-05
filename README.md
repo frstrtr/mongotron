@@ -1217,6 +1217,118 @@ spec:
 
 ---
 
+## Testing
+
+MongoTron includes a comprehensive test suite to ensure reliability and maintainability.
+
+### Test Statistics
+- **Total Tests**: 13 unit tests + 8+ integration tests
+- **Coverage**: 38.1% (handlers), targeting 80%+
+- **Test Frameworks**: Go testing, testify (mocking & assertions)
+
+### Quick Test Commands
+
+```bash
+# Run all unit tests
+make test
+
+# Run with verbose output
+make test-verbose
+
+# Generate coverage report
+make test-coverage
+
+# Run integration tests (requires running API server)
+make test-integration
+
+# Run benchmarks
+make test-bench
+```
+
+### Test Organization
+
+```
+mongotron/
+├── internal/api/handlers/
+│   ├── subscription_test.go    # 9 subscription handler tests
+│   └── health_test.go          # 4 health check tests
+└── test/integration/
+    └── api_integration_test.go # 5 integration test suites
+```
+
+### Unit Tests (13 tests)
+
+**Health Check Tests (4)**:
+- Health endpoint validation
+- Kubernetes readiness probe
+- Kubernetes liveness probe  
+- Service unavailable handling
+
+**Subscription Handler Tests (9)**:
+- Subscription creation (success & validation)
+- Subscription retrieval (success & not found)
+- Subscription listing (default & custom pagination)
+- Subscription deletion (success & error handling)
+- Advanced filtering support
+
+### Integration Tests (5 suites)
+
+**Full API Lifecycle**:
+1. Complete subscription flow (create → read → list → delete)
+2. Error handling scenarios (validation, 404, 500)
+3. Rate limiting validation (100 req/min)
+4. Pagination with multiple subscriptions
+5. Concurrent request handling (10 goroutines)
+
+### Running Tests
+
+**Unit Tests** (fast, no external dependencies):
+```bash
+./run_tests.sh unit
+# or
+go test ./internal/api/handlers/...
+```
+
+**Integration Tests** (requires API server):
+```bash
+# Terminal 1: Start API server
+./bin/mongotron-api
+
+# Terminal 2: Run integration tests
+./run_tests.sh integration
+# or
+go test ./test/integration/...
+```
+
+**Coverage Report**:
+```bash
+make test-coverage
+open coverage.html
+```
+
+### Writing Tests
+
+MongoTron uses **testify** for mocking and assertions:
+
+```go
+func TestExample(t *testing.T) {
+    // Arrange
+    mockManager := new(MockSubscriptionManager)
+    mockManager.On("Subscribe", mock.Anything).Return(subscription, nil)
+    
+    // Act
+    result := handler.CreateSubscription(req)
+    
+    // Assert
+    assert.Equal(t, 200, result.StatusCode)
+    mockManager.AssertExpectations(t)
+}
+```
+
+For detailed testing documentation, see [TEST_GUIDE.md](TEST_GUIDE.md).
+
+---
+
 ## Contributing
 
 We welcome contributions to MongoTron! Please follow these guidelines:
