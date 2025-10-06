@@ -40,7 +40,7 @@ def test_smart_contract_display():
         print(f"\n{'='*80}")
         print(f"EVENT #{i}")
         print(f"{'='*80}")
-        print(f"TX Hash:      {event.get('txHash', 'N/A')[:40]}...")
+        print(f"TX Hash:      {event.get('txHash', 'N/A')}")
         print(f"Block:        {event.get('blockNumber', 'N/A')}")
         print(f"Type:         {event.get('type', 'N/A')}")
         print(f"Success:      {event_data.get('success', False)}")

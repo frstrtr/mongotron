@@ -330,7 +330,7 @@ class EventMonitor:
         print(f"{'='*80}")
         print(f"📍 ID:          {event_id}")
         print(f"📄 Contract:    {contract}")
-        print(f"🔗 TX Hash:     {tx_hash[:20]}...{tx_hash[-20:] if len(tx_hash) > 40 else ''}")
+        print(f"🔗 TX Hash:     {tx_hash}")
         print(f"📦 Block:       {block_number}")
         print(f"⏰ Time:        {time_str}")
         
@@ -423,7 +423,7 @@ class EventMonitor:
         print(f"\n{'='*80}")
         print(f"🔔 TRANSACTION EVENT #{count} - {contract_type}")
         print(f"{'='*80}")
-        print(f"📍 TX ID:       {tx_id[:20]}...{tx_id[-20:] if len(tx_id) > 40 else ''}")
+        print(f"📍 TX ID:       {tx_id}")
         print(f"📦 Block:       {block_num}")
         print(f"⏰ Time:        {time_str}")
         print(f"✅ Success:     {success}")
