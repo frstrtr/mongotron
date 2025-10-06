@@ -24,6 +24,7 @@ type TRC20Method struct {
 var (
 	// Common TRC20 function signatures (first 4 bytes of keccak256 hash)
 	TRC20Methods = map[string]TRC20Method{
+		// TRC20 Standard
 		"a9059cbb": {Signature: "a9059cbb", Name: "transfer(address,uint256)"},             // transfer
 		"23b872dd": {Signature: "23b872dd", Name: "transferFrom(address,address,uint256)"}, // transferFrom
 		"095ea7b3": {Signature: "095ea7b3", Name: "approve(address,uint256)"},              // approve
@@ -33,6 +34,54 @@ var (
 		"06fdde03": {Signature: "06fdde03", Name: "name()"},                                // name
 		"95d89b41": {Signature: "95d89b41", Name: "symbol()"},                              // symbol
 		"18160ddd": {Signature: "18160ddd", Name: "totalSupply()"},                         // totalSupply
+
+		// DEX / Swap Methods
+		"38ed1739": {Signature: "38ed1739", Name: "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"},
+		"8803dbee": {Signature: "8803dbee", Name: "swapTokensForExactTokens(uint256,uint256,address[],address,uint256)"},
+		"7ff36ab5": {Signature: "7ff36ab5", Name: "swapExactETHForTokens(uint256,address[],address,uint256)"},
+		"fb3bdb41": {Signature: "fb3bdb41", Name: "swapETHForExactTokens(uint256,address[],address,uint256)"},
+		"18cbafe5": {Signature: "18cbafe5", Name: "swapExactTokensForETH(uint256,uint256,address[],address,uint256)"},
+		"4a25d94a": {Signature: "4a25d94a", Name: "swapTokensForExactETH(uint256,uint256,address[],address,uint256)"},
+		"02751cec": {Signature: "02751cec", Name: "removeLiquidity(address,address,uint256,uint256,uint256,address,uint256)"},
+		"e8e33700": {Signature: "e8e33700", Name: "addLiquidity(address,address,uint256,uint256,uint256,uint256,address,uint256)"},
+
+		// Staking / Farming
+		"a694fc3a": {Signature: "a694fc3a", Name: "stake(uint256)"},
+		"2e1a7d4d": {Signature: "2e1a7d4d", Name: "withdraw(uint256)"},
+		"3ccfd60b": {Signature: "3ccfd60b", Name: "withdraw()"},
+		"e9fad8ee": {Signature: "e9fad8ee", Name: "exit()"},
+		"3d18b912": {Signature: "3d18b912", Name: "getReward()"},
+		"ded9382a": {Signature: "ded9382a", Name: "removeLiquidityETHWithPermit(address,uint256,uint256,uint256,address,uint256,bool,uint8,bytes32,bytes32)"},
+
+		// NFT Methods (ERC721/TRC721)
+		"42842e0e": {Signature: "42842e0e", Name: "safeTransferFrom(address,address,uint256)"},
+		"b88d4fde": {Signature: "b88d4fde", Name: "safeTransferFrom(address,address,uint256,bytes)"},
+		"6352211e": {Signature: "6352211e", Name: "ownerOf(uint256)"},
+		"40c10f19": {Signature: "40c10f19", Name: "mint(address,uint256)"},
+		"42966c68": {Signature: "42966c68", Name: "burn(uint256)"},
+
+		// Governance
+		"15373e3d": {Signature: "15373e3d", Name: "vote(uint256,bool)"},
+		"fe0d94c1": {Signature: "fe0d94c1", Name: "execute(uint256)"},
+		"da95691a": {Signature: "da95691a", Name: "propose(address[],uint256[],string[],bytes[],string)"},
+		"b61d27f6": {Signature: "b61d27f6", Name: "execute(address,uint256,bytes)"},
+
+		// Common Contract Methods
+		"d0e30db0": {Signature: "d0e30db0", Name: "deposit()"},
+		"f305d719": {Signature: "f305d719", Name: "addLiquidityETH(address,uint256,uint256,uint256,address,uint256)"},
+		"c45a0155": {Signature: "c45a0155", Name: "claim()"},
+		"4e71d92d": {Signature: "4e71d92d", Name: "claim()"},
+		"379607f5": {Signature: "379607f5", Name: "claim(uint256)"},
+		"1c4b774b": {Signature: "1c4b774b", Name: "unstake(uint256)"},
+		"b6b55f25": {Signature: "b6b55f25", Name: "deposit(uint256)"},
+		"441a3e70": {Signature: "441a3e70", Name: "withdraw(uint256,address)"},
+		"853828b6": {Signature: "853828b6", Name: "withdrawAll()"},
+
+		// Proxy / Upgradeable
+		"3659cfe6": {Signature: "3659cfe6", Name: "upgradeTo(address)"},
+		"4f1ef286": {Signature: "4f1ef286", Name: "upgradeToAndCall(address,bytes)"},
+		"8129fc1c": {Signature: "8129fc1c", Name: "initialize()"},
+		"9d61d234": {Signature: "9d61d234", Name: "safeMint(address,uint256)"},
 	}
 )
 

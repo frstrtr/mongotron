@@ -72,14 +72,75 @@ def hex_to_base58(hex_address: str) -> str:
 
 
 def format_address(address: str) -> str:
-    """Format address for display (convert to Base58 and truncate middle)"""
-    # Convert hex to Base58 if needed
-    if address.startswith('41'):
-        address = hex_to_base58(address)
-    
-    if len(address) > 20:
-        return f"{address[:10]}...{address[-10:]}"
+    """Format address for display (truncate middle)"""
+    if len(address) > 10:
+        return f"{address[:6]}...{address[-4:]}"
     return address
+
+
+def format_contract_type(contract_type: str) -> str:
+    """Format contract type to be more human-readable with emoji"""
+    type_mapping = {
+        # Basic transfers
+        'TransferContract': '💸 TRX Transfer',
+        'TransferAssetContract': '🪙 TRC10 Token Transfer',
+        
+        # Smart contracts
+        'TriggerSmartContract': '⚙️ Smart Contract Call',
+        'CreateSmartContract': '📝 Create Smart Contract',
+        'UpdateSettingContract': '⚙️ Update Contract Settings',
+        'UpdateEnergyLimitContract': '⚡ Update Energy Limit',
+        
+        # Resource management
+        'FreezeBalanceContract': '❄️ Freeze Balance',
+        'UnfreezeBalanceContract': '🔥 Unfreeze Balance',
+        'FreezeBalanceV2Contract': '❄️ Freeze Balance (v2)',
+        'UnfreezeBalanceV2Contract': '🔥 Unfreeze Balance (v2)',
+        'WithdrawExpireUnfreezeContract': '💰 Withdraw Unfrozen',
+        'DelegateResourceContract': '🤝 Delegate Resources',
+        'UnDelegateResourceContract': '↩️ Undelegate Resources',
+        
+        # Staking & Rewards
+        'WithdrawBalanceContract': '💵 Withdraw Rewards',
+        'VoteWitnessContract': '🗳️ Vote for Witness',
+        
+        # Account operations
+        'AccountCreateContract': '👤 Create Account',
+        'AccountUpdateContract': '✏️ Update Account',
+        'SetAccountIdContract': '🆔 Set Account ID',
+        'AccountPermissionUpdateContract': '🔐 Update Permissions',
+        
+        # Witness operations
+        'WitnessCreateContract': '🏛️ Create Witness',
+        'WitnessUpdateContract': '🏛️ Update Witness',
+        'UpdateBrokerageContract': '💼 Update Brokerage',
+        
+        # Asset operations
+        'AssetIssueContract': '🎫 Issue Asset',
+        'UpdateAssetContract': '🎫 Update Asset',
+        'ParticipateAssetIssueContract': '🛒 Buy Asset',
+        'UnfreezeAssetContract': '🔓 Unfreeze Asset',
+        
+        # Proposals
+        'ProposalCreateContract': '📋 Create Proposal',
+        'ProposalApproveContract': '✅ Approve Proposal',
+        'ProposalDeleteContract': '🗑️ Delete Proposal',
+        
+        # Exchange
+        'ExchangeCreateContract': '🔄 Create Exchange',
+        'ExchangeInjectContract': '💉 Inject to Exchange',
+        'ExchangeWithdrawContract': '💰 Withdraw from Exchange',
+        'ExchangeTransactionContract': '🔁 Exchange Transaction',
+        
+        # Market (TRX/TRC10)
+        'MarketSellAssetContract': '📉 Market Sell',
+        'MarketCancelOrderContract': '❌ Cancel Market Order',
+        
+        # Shield (Privacy)
+        'ShieldedTransferContract': '🛡️ Shielded Transfer',
+    }
+    
+    return type_mapping.get(contract_type, f'📄 {contract_type}')
 
 
 def format_tx_link(tx_hash: str) -> str:
@@ -128,6 +189,9 @@ def format_event(event: dict) -> str:
         logger.warning(f"Event has no meaningful data: {event}")
         return None
     
+    # Get event data early as we'll need it in multiple places
+    event_data = event.get('EventData', {})
+    
     msg_lines = []
     
     # Header
@@ -159,21 +223,58 @@ def format_event(event: dict) -> str:
         amount_trx = amount / 1_000_000  # Convert from SUN to TRX
         msg_lines.append(f"💰 Amount: <b>{amount_trx:.6f} TRX</b>")
     
-    # Contract type
+    # Contract type - use human-readable format with emoji
     contract_type = event.get('ContractType') or event.get('contractType')
     if contract_type:
-        msg_lines.append(f"📋 Type: <code>{contract_type}</code>")
+        formatted_type = format_contract_type(contract_type)
+        msg_lines.append(f"📋 Type: <b>{formatted_type}</b>")
+    
+    # Show additional details for specific transaction types
+    if contract_type in ['DelegateResourceContract', 'UnDelegateResourceContract']:
+        msg_lines.append("")
+        # These are resource delegation operations
+        resource = event_data.get('resource', 'BANDWIDTH')
+        balance = event_data.get('balance', 0)
+        if balance > 0:
+            trx_amount = balance / 1_000_000
+            msg_lines.append(f"   💎 Resource: <b>{resource}</b>")
+            msg_lines.append(f"   💰 Amount: <b>{trx_amount:.6f} TRX</b>")
+    
+    elif contract_type == 'VoteWitnessContract':
+        msg_lines.append("")
+        # Voting for witnesses
+        votes = event_data.get('votes', [])
+        if votes:
+            msg_lines.append(f"   🗳️ Voting for {len(votes)} witness(es)")
+    
+    elif contract_type in ['FreezeBalanceContract', 'UnfreezeBalanceContract', 
+                            'FreezeBalanceV2Contract', 'UnfreezeBalanceV2Contract']:
+        msg_lines.append("")
+        frozen_amount = event.get('Amount', 0)
+        if frozen_amount > 0:
+            trx_amount = frozen_amount / 1_000_000
+            resource = event_data.get('resource', 'ENERGY')
+            msg_lines.append(f"   💎 Resource: <b>{resource}</b>")
+            msg_lines.append(f"   💰 Amount: <b>{trx_amount:.6f} TRX</b>")
+    
+    elif contract_type == 'AccountCreateContract':
+        msg_lines.append("")
+        msg_lines.append(f"   🆕 New account created!")
     
     # Smart contract decoded info (check both EventData and direct smartContract)
-    event_data = event.get('EventData', {})
     sc = event_data.get('smartContract') or event.get('smartContract', {})
     if sc:
         msg_lines.append("")
         msg_lines.append("🔍 <b>Smart Contract Details:</b>")
         
         method_name = sc.get('methodName')
+        method_sig = sc.get('methodSignature')
+        
         if method_name:
             msg_lines.append(f"   ⚙️ Method: <code>{method_name}</code>")
+        elif method_sig:
+            # Show hex signature if method name is unknown
+            msg_lines.append(f"   ⚙️ Method: <code>0x{method_sig}</code> (unknown)")
         
         addresses = sc.get('addresses', [])
         if addresses:
