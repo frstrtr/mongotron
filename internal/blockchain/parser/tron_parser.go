@@ -12,7 +12,8 @@ import (
 
 // TronParser parses Tron blockchain data
 type TronParser struct {
-	logger *logger.Logger
+	logger     *logger.Logger
+	abiDecoder *ABIDecoder
 }
 
 // NewTronParser creates a new Tron parser
@@ -23,7 +24,8 @@ func NewTronParser(log *logger.Logger) *TronParser {
 	}
 
 	return &TronParser{
-		logger: log,
+		logger:     log,
+		abiDecoder: NewABIDecoder(),
 	}
 }
 
@@ -146,12 +148,51 @@ func (p *TronParser) parseTriggerSmartContract(contract *core.Transaction_Contra
 		return nil
 	}
 
-	addresses := make([]string, 0, 2)
+	addresses := make([]string, 0, 4)
+
+	// Add caller address (owner)
 	if len(trigger.GetOwnerAddress()) > 0 {
 		addresses = append(addresses, p.encodeAddress(trigger.GetOwnerAddress()))
 	}
+
+	// Add contract address
 	if len(trigger.GetContractAddress()) > 0 {
 		addresses = append(addresses, p.encodeAddress(trigger.GetContractAddress()))
+	}
+
+	// Decode contract call data to extract addresses from parameters
+	callData := trigger.GetData()
+	if len(callData) >= 4 {
+		decoded, err := p.abiDecoder.DecodeContractData(callData)
+		if err != nil {
+			p.logger.Debug().
+				Err(err).
+				Str("methodSig", hex.EncodeToString(callData[:4])).
+				Msg("Could not decode contract data")
+		} else {
+			// Add all addresses found in the contract parameters
+			for _, addr := range decoded.Addresses {
+				// Avoid duplicates
+				duplicate := false
+				for _, existing := range addresses {
+					if existing == addr {
+						duplicate = true
+						break
+					}
+				}
+				if !duplicate {
+					addresses = append(addresses, addr)
+				}
+			}
+
+			// Log the decoded call for debugging
+			if len(decoded.Addresses) > 0 {
+				p.logger.Debug().
+					Str("method", decoded.MethodName).
+					Strs("paramAddresses", decoded.Addresses).
+					Msg("Decoded smart contract call")
+			}
+		}
 	}
 
 	return addresses
