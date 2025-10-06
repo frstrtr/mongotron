@@ -92,6 +92,20 @@ def format_tx_link(tx_hash: str) -> str:
     return f'<a href="https://nile.tronscan.org/#/transaction/{tx_hash}">{short_hash}</a>'
 
 
+def format_address_link(address: str) -> str:
+    """Format address as a clickable TronScan link (converts hex to Base58 first)"""
+    if not address:
+        return "N/A"
+    
+    # Convert hex to Base58 if needed
+    if address.startswith('41'):
+        address = hex_to_base58(address)
+    
+    short_addr = f"{address[:10]}...{address[-10:]}" if len(address) > 20 else address
+    # Use Nile testnet TronScan
+    return f'<a href="https://nile.tronscan.org/#/address/{address}">{short_addr}</a>'
+
+
 def format_event(event: dict) -> str:
     """Format event data for Telegram message"""
     # Skip empty or invalid events
@@ -121,15 +135,14 @@ def format_event(event: dict) -> str:
     if tx_hash:
         msg_lines.append(f"🔗 TX: {format_tx_link(tx_hash)}")
     
-    # From/To addresses (convert hex to Base58)
+    # From/To addresses (convert hex to Base58 and make clickable)
     from_addr = event.get('From') or event.get('from')
     if from_addr:
-        msg_lines.append(f"📤 From: <code>{format_address(from_addr)}</code>")
+        msg_lines.append(f"📤 From: {format_address_link(from_addr)}")
     
     to_addr = event.get('To') or event.get('to')
     if to_addr:
-        msg_lines.append(f"📥 To: <code>{format_address(to_addr)}</code>")
-        msg_lines.append(f"📥 To: <code>{format_address(to_addr)}</code>")
+        msg_lines.append(f"📥 To: {format_address_link(to_addr)}")
     
     # Amount
     amount = event.get('Amount') or event.get('amount')
@@ -157,7 +170,7 @@ def format_event(event: dict) -> str:
         if addresses:
             msg_lines.append(f"   📍 Param Addresses:")
             for addr in addresses[:3]:  # Limit to 3 addresses
-                msg_lines.append(f"      • <code>{format_address(addr)}</code>")
+                msg_lines.append(f"      • {format_address_link(addr)}")
         
         sc_amount = sc.get('amount')
         if sc_amount:
@@ -171,8 +184,11 @@ def format_event(event: dict) -> str:
                 if isinstance(value, str):
                     # Check if it's an address (starts with 41 or T)
                     if value.startswith('41') and len(value) == 42:
-                        formatted_value = format_address(value)
-                        msg_lines.append(f"      • {key}: <code>{formatted_value}</code>")
+                        formatted_value = format_address_link(value)
+                        msg_lines.append(f"      • {key}: {formatted_value}")
+                    elif value.startswith('T') and len(value) == 34:
+                        formatted_value = format_address_link(value)
+                        msg_lines.append(f"      • {key}: {formatted_value}")
                     elif len(value) < 50:
                         msg_lines.append(f"      • {key}: <code>{value}</code>")
     

@@ -426,7 +426,7 @@ class EventMonitor:
         print(f"📍 TX ID:       {tx_id}")
         print(f"📦 Block:       {block_num}")
         print(f"⏰ Time:        {time_str}")
-        print(f"✅ Success:     {success}")
+        # print(f"✅ Success:     {success}")
         
         # Display addresses with both hex and readable formats
         print(f"\n{'─'*80}")
