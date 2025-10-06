@@ -42,7 +42,7 @@ type AddressInfo struct {
 	Address         string
 	Type            string // "account", "contract", "unknown"
 	Balance         int64
-	Interactions    []string // List of interaction types
+	Interactions    []string // List of unique interaction types (no duplicates)
 	TxCount         int
 	IncomingTx      int
 	OutgoingTx      int
@@ -381,6 +381,17 @@ func (m *BlockMonitor) extractTransactionData(ctx context.Context, block *core.B
 	return txData, nil
 }
 
+// addUniqueInteraction adds an interaction type to the address if it doesn't already exist
+func (m *BlockMonitor) addUniqueInteraction(addr *AddressInfo, interactionType string) {
+	// Check if interaction already exists
+	for _, existing := range addr.Interactions {
+		if existing == interactionType {
+			return // Already exists, don't add duplicate
+		}
+	}
+	addr.Interactions = append(addr.Interactions, interactionType)
+}
+
 // updateAddressInfo updates address information based on transaction data
 func (m *BlockMonitor) updateAddressInfo(addresses map[string]*AddressInfo, txData *TransactionData) {
 	// Update from address
@@ -388,7 +399,7 @@ func (m *BlockMonitor) updateAddressInfo(addresses map[string]*AddressInfo, txDa
 		addr := m.getOrCreateAddressInfo(addresses, txData.FromAddress)
 		addr.TxCount++
 		addr.OutgoingTx++
-		addr.Interactions = append(addr.Interactions, fmt.Sprintf("sent_%s", txData.ContractType))
+		m.addUniqueInteraction(addr, fmt.Sprintf("sent_%s", txData.ContractType))
 	}
 
 	// Update to address
@@ -396,7 +407,7 @@ func (m *BlockMonitor) updateAddressInfo(addresses map[string]*AddressInfo, txDa
 		addr := m.getOrCreateAddressInfo(addresses, txData.ToAddress)
 		addr.TxCount++
 		addr.IncomingTx++
-		addr.Interactions = append(addr.Interactions, fmt.Sprintf("received_%s", txData.ContractType))
+		m.addUniqueInteraction(addr, fmt.Sprintf("received_%s", txData.ContractType))
 
 		// Check if it's a contract
 		if txData.ContractType == "TriggerSmartContract" || txData.ContractType == "CreateSmartContract" {
@@ -411,7 +422,7 @@ func (m *BlockMonitor) updateAddressInfo(addresses map[string]*AddressInfo, txDa
 		if logAddr, ok := log["address"].(string); ok && logAddr != "" {
 			addr := m.getOrCreateAddressInfo(addresses, logAddr)
 			addr.Type = "contract"
-			addr.Interactions = append(addr.Interactions, "contract_event")
+			m.addUniqueInteraction(addr, "contract_event")
 		}
 	}
 
@@ -419,11 +430,11 @@ func (m *BlockMonitor) updateAddressInfo(addresses map[string]*AddressInfo, txDa
 	for _, itx := range txData.InternalTxs {
 		if fromAddr, ok := itx["from"].(string); ok && fromAddr != "" {
 			addr := m.getOrCreateAddressInfo(addresses, fromAddr)
-			addr.Interactions = append(addr.Interactions, "internal_tx_from")
+			m.addUniqueInteraction(addr, "internal_tx_from")
 		}
 		if toAddr, ok := itx["to"].(string); ok && toAddr != "" {
 			addr := m.getOrCreateAddressInfo(addresses, toAddr)
-			addr.Interactions = append(addr.Interactions, "internal_tx_to")
+			m.addUniqueInteraction(addr, "internal_tx_to")
 		}
 	}
 }
