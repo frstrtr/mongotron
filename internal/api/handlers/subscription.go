@@ -20,7 +20,7 @@ func NewSubscriptionHandler(manager subscription.ManagerInterface) *Subscription
 
 // CreateSubscriptionRequest represents a subscription creation request
 type CreateSubscriptionRequest struct {
-	Address    string                     `json:"address" validate:"required"`
+	Address    string                     `json:"address"` // Optional - empty for all addresses
 	WebhookURL string                     `json:"webhookUrl,omitempty"`
 	Filters    models.SubscriptionFilters `json:"filters"`
 	StartBlock int64                      `json:"startBlock,omitempty"`
@@ -66,11 +66,12 @@ func (h *SubscriptionHandler) CreateSubscription(c *fiber.Ctx) error {
 		})
 	}
 
-	// Validate address
-	if req.Address == "" {
+	// Address is now optional - if empty, monitor all addresses
+	// But if monitoring all addresses, must have contract type filter
+	if req.Address == "" && len(req.Filters.ContractTypes) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
-			Error:   "invalid_address",
-			Message: "Address is required",
+			Error:   "invalid_request",
+			Message: "When monitoring all addresses, contract type filter is required for performance",
 		})
 	}
 

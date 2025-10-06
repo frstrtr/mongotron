@@ -14,9 +14,17 @@ import (
 	"github.com/google/uuid"
 )
 
-// MonitorWrapper wraps an AddressMonitor with subscription info
+// BlockchainMonitor is an interface for blockchain monitors
+type BlockchainMonitor interface {
+	Start() error
+	Stop()
+	Events() <-chan *monitor.AddressEvent
+	GetLastBlockNumber() int64
+}
+
+// MonitorWrapper wraps a blockchain monitor with subscription info
 type MonitorWrapper struct {
-	Monitor      *monitor.AddressMonitor
+	Monitor      BlockchainMonitor
 	Subscription *models.Subscription
 	EventChan    <-chan *monitor.AddressEvent
 	StopChan     chan struct{}
@@ -205,28 +213,59 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 		return fmt.Errorf("subscription already active")
 	}
 
-	// Create monitor config
-	cfg := monitor.Config{
-		WatchAddress: sub.Address,
-		PollInterval: 3 * time.Second,
-		StartBlock:   sub.CurrentBlock,
-	}
+	var monitorInstance BlockchainMonitor
+	var eventChan <-chan *monitor.AddressEvent
 
-	// Create address monitor
-	addrMonitor, err := monitor.NewAddressMonitor(
-		m.tronClient,
-		cfg,
-		m.logger,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create monitor: %w", err)
+	// Create either global or address-specific monitor
+	if sub.Address == "" {
+		// Global monitoring - watch all transactions
+		m.logger.Info().
+			Str("subscriptionId", sub.SubscriptionID).
+			Msg("Creating global monitor")
+
+		globalCfg := monitor.GlobalConfig{
+			PollInterval: 3 * time.Second,
+			StartBlock:   sub.CurrentBlock,
+		}
+
+		globalMonitor, err := monitor.NewGlobalMonitor(
+			m.tronClient,
+			globalCfg,
+			m.logger,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create global monitor: %w", err)
+		}
+
+		monitorInstance = globalMonitor
+		eventChan = globalMonitor.Events()
+
+	} else {
+		// Address-specific monitoring
+		cfg := monitor.Config{
+			WatchAddress: sub.Address,
+			PollInterval: 3 * time.Second,
+			StartBlock:   sub.CurrentBlock,
+		}
+
+		addrMonitor, err := monitor.NewAddressMonitor(
+			m.tronClient,
+			cfg,
+			m.logger,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create address monitor: %w", err)
+		}
+
+		monitorInstance = addrMonitor
+		eventChan = addrMonitor.Events()
 	}
 
 	// Create wrapper
 	wrapper := &MonitorWrapper{
-		Monitor:      addrMonitor,
+		Monitor:      monitorInstance,
 		Subscription: sub,
-		EventChan:    addrMonitor.Events(),
+		EventChan:    eventChan,
 		StopChan:     make(chan struct{}),
 		Stopped:      false,
 	}
@@ -236,7 +275,7 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 
 	// Start monitor goroutine
 	go func() {
-		if err := addrMonitor.Start(); err != nil {
+		if err := monitorInstance.Start(); err != nil {
 			m.logger.Error().
 				Err(err).
 				Str("subscriptionId", sub.SubscriptionID).
@@ -247,9 +286,14 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 	// Start event processor goroutine
 	go m.processEvents(wrapper)
 
+	addressInfo := sub.Address
+	if addressInfo == "" {
+		addressInfo = "GLOBAL"
+	}
+
 	m.logger.Info().
 		Str("subscriptionId", sub.SubscriptionID).
-		Str("address", sub.Address).
+		Str("address", addressInfo).
 		Int64("startBlock", sub.StartBlock).
 		Msg("Monitor started")
 

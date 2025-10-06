@@ -106,6 +106,15 @@ def format_address_link(address: str) -> str:
     return f'<a href="https://nile.tronscan.org/#/address/{address}">{short_addr}</a>'
 
 
+def format_block_link(block_number: int) -> str:
+    """Format block number as a clickable TronScan link"""
+    if not block_number:
+        return "N/A"
+    
+    # Use Nile testnet TronScan
+    return f'<a href="https://nile.tronscan.org/#/block/{block_number}">{block_number}</a>'
+
+
 def format_event(event: dict) -> str:
     """Format event data for Telegram message"""
     # Skip empty or invalid events
@@ -125,10 +134,10 @@ def format_event(event: dict) -> str:
     msg_lines.append("🔔 <b>New Transaction Detected</b>")
     msg_lines.append("─" * 40)
     
-    # Block info (try both uppercase and lowercase)
+    # Block info (try both uppercase and lowercase) - make it a clickable link
     block_number = event.get('BlockNumber') or event.get('blockNumber')
     if block_number:
-        msg_lines.append(f"📦 Block: <code>{block_number}</code>")
+        msg_lines.append(f"📦 Block: {format_block_link(block_number)}")
     
     # Transaction hash (try multiple field names) - make it a clickable link
     tx_hash = event.get('TransactionID') or event.get('TransactionHash') or event.get('txHash')
@@ -174,7 +183,12 @@ def format_event(event: dict) -> str:
         
         sc_amount = sc.get('amount')
         if sc_amount:
-            msg_lines.append(f"   💵 Token Amount: <code>{sc_amount}</code>")
+            # Convert token amount (assuming 6 decimals like USDT)
+            try:
+                token_amount = int(sc_amount) / 1_000_000
+                msg_lines.append(f"   💵 Token Amount: <code>{token_amount:,.6f}</code>")
+            except (ValueError, TypeError):
+                msg_lines.append(f"   💵 Token Amount: <code>{sc_amount}</code>")
         
         # Show decoded parameters if available
         params = sc.get('parameters', {})
@@ -191,14 +205,6 @@ def format_event(event: dict) -> str:
                         msg_lines.append(f"      • {key}: {formatted_value}")
                     elif len(value) < 50:
                         msg_lines.append(f"      • {key}: <code>{value}</code>")
-    
-    # Status
-    success = event.get('Success')
-    if success is None:
-        success = event.get('success')
-    if success is not None:
-        status = "✅ Success" if success else "❌ Failed"
-        msg_lines.append(f"\n{status}")
     
     # Timestamp
     timestamp = datetime.now().strftime('%H:%M:%S')
@@ -243,42 +249,7 @@ async def monitor_address(chat_id: int, address: str):
         ws_url = f"{WS_BASE_URL}/api/v1/events/stream/{subscription_id}"
         logger.info(f"Connecting to WebSocket: {ws_url}")
         
-        async with websockets.connect(ws_url) as websocket:
-            await bot.send_message(
-                chat_id,
-                f"✅ Now monitoring address:\n<code>{address}</code>\n\n"
-                f"You'll receive notifications for all transactions related to this address.",
-                parse_mode="HTML"
-            )
-            
-            # Listen for events
-            async for message in websocket:
-                try:
-                    # Log raw message for debugging
-                    logger.debug(f"Received WebSocket message: {message[:200]}...")
-                    
-                    event = json.loads(message)
-                    logger.info(f"Parsed event: {event}")
-                    
-                    # Format and send the event
-                    formatted_msg = format_event(event)
-                    
-                    # Only send if we have a valid formatted message
-                    if formatted_msg:
-                        await bot.send_message(
-                            chat_id,
-                            formatted_msg,
-                            parse_mode="HTML",
-                            disable_web_page_preview=True
-                        )
-                    else:
-                        logger.warning(f"Skipped empty or invalid event: {event}")
-                    
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to decode WebSocket message: {message}")
-                    logger.error(f"JSON decode error: {e}")
-                except Exception as e:
-                    logger.error(f"Error processing event: {e}", exc_info=True)
+        await process_websocket_events(chat_id, address, ws_url, filter_sc=False)
                     
     except websockets.exceptions.WebSocketException as e:
         logger.error(f"WebSocket error for {address}: {e}")
@@ -304,6 +275,190 @@ async def monitor_address(chat_id: int, address: str):
                 del active_monitors[chat_id]
 
 
+async def monitor_smart_contracts(chat_id: int, address: str):
+    """Monitor smart contract events for an address via WebSocket"""
+    subscription_id = None
+    try:
+        # Create subscription for address monitoring via API
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{API_BASE_URL}/api/v1/subscriptions",
+                json={"address": address}
+            ) as resp:
+                if resp.status != 200 and resp.status != 201:
+                    error_text = await resp.text()
+                    logger.error(f"Failed to create subscription for {address}: {error_text}")
+                    await bot.send_message(
+                        chat_id,
+                        f"❌ Failed to create subscription for monitoring: {error_text}"
+                    )
+                    return
+                
+                # Get subscription ID from response
+                result = await resp.json()
+                subscription_id = result.get('subscriptionId') or result.get('id')
+                if not subscription_id:
+                    logger.error(f"No subscription ID in response: {result}")
+                    await bot.send_message(
+                        chat_id,
+                        f"❌ Failed to get subscription ID from server"
+                    )
+                    return
+                
+                logger.info(f"Created SC subscription {subscription_id} for address {address}")
+        
+        # Connect to WebSocket with subscription ID
+        ws_url = f"{WS_BASE_URL}/api/v1/events/stream/{subscription_id}"
+        logger.info(f"Connecting to WebSocket for SC monitoring: {ws_url}")
+        
+        await process_websocket_events(chat_id, address, ws_url, filter_sc=True)
+                    
+    except websockets.exceptions.WebSocketException as e:
+        logger.error(f"WebSocket error for {address}: {e}")
+        await bot.send_message(
+            chat_id,
+            f"❌ Connection lost for smart contract monitor:\n<code>{address}</code>\n\n"
+            f"Error: {str(e)}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error monitoring smart contracts for {address}: {e}")
+        await bot.send_message(
+            chat_id,
+            f"❌ Error monitoring smart contracts:\n<code>{address}</code>\n\n"
+            f"Error: {str(e)}",
+            parse_mode="HTML"
+        )
+    finally:
+        # Clean up
+        sc_key = f"{address}_SC"
+        if chat_id in active_monitors and sc_key in active_monitors[chat_id]:
+            del active_monitors[chat_id][sc_key]
+            if not active_monitors[chat_id]:
+                del active_monitors[chat_id]
+
+
+async def monitor_all_smart_contracts(chat_id: int):
+    """Monitor all smart contract events across the entire network"""
+    subscription_id = None
+    try:
+        # Create subscription with empty address for global monitoring
+        # Use contract type filter to only see smart contract interactions
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{API_BASE_URL}/api/v1/subscriptions",
+                json={
+                    "address": "",  # Empty address = monitor all addresses
+                    "filters": {
+                        "contractTypes": ["TriggerSmartContract"]
+                    }
+                }
+            ) as resp:
+                if resp.status != 200 and resp.status != 201:
+                    error_text = await resp.text()
+                    logger.error(f"Failed to create global SC subscription: {error_text}")
+                    await bot.send_message(
+                        chat_id,
+                        f"❌ Failed to create global SC monitoring subscription: {error_text}"
+                    )
+                    return
+                
+                # Get subscription ID from response
+                result = await resp.json()
+                subscription_id = result.get('subscriptionId') or result.get('id')
+                if not subscription_id:
+                    logger.error(f"No subscription ID in response: {result}")
+                    await bot.send_message(
+                        chat_id,
+                        f"❌ Failed to get subscription ID from server"
+                    )
+                    return
+                
+                logger.info(f"Created global SC subscription {subscription_id}")
+        
+        # Connect to WebSocket with subscription ID
+        ws_url = f"{WS_BASE_URL}/api/v1/events/stream/{subscription_id}"
+        logger.info(f"Connecting to WebSocket for global SC monitoring: {ws_url}")
+        
+        # Don't filter on bot side since API is already filtering by contract type
+        await process_websocket_events(chat_id, "GLOBAL_SC", ws_url, filter_sc=False)
+                    
+    except websockets.exceptions.WebSocketException as e:
+        logger.error(f"WebSocket error for global SC monitor: {e}")
+        await bot.send_message(
+            chat_id,
+            f"❌ Connection lost for global smart contract monitor\n\n"
+            f"Error: {str(e)}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error monitoring global smart contracts: {e}")
+        await bot.send_message(
+            chat_id,
+            f"❌ Error monitoring global smart contracts\n\n"
+            f"Error: {str(e)}",
+            parse_mode="HTML"
+        )
+    finally:
+        # Clean up
+        if chat_id in active_monitors and "GLOBAL_SC" in active_monitors[chat_id]:
+            del active_monitors[chat_id]["GLOBAL_SC"]
+            if not active_monitors[chat_id]:
+                del active_monitors[chat_id]
+
+
+async def process_websocket_events(chat_id: int, address: str, ws_url: str, filter_sc: bool = False):
+    """Process WebSocket events with optional smart contract filtering"""
+    async with websockets.connect(ws_url) as websocket:
+        monitor_type = "smart contract interactions" if filter_sc else "all transactions"
+        await bot.send_message(
+            chat_id,
+            f"✅ Now monitoring {monitor_type} for:\n<code>{address}</code>\n\n"
+            f"You'll receive notifications for all {'smart contract ' if filter_sc else ''}events.",
+            parse_mode="HTML"
+        )
+        
+        # Listen for events
+        async for message in websocket:
+            try:
+                # Log raw message for debugging
+                logger.debug(f"Received WebSocket message: {message[:200]}...")
+                
+                event = json.loads(message)
+                logger.info(f"Parsed event: {event}")
+                
+                # If filtering for smart contracts only, check if this is a smart contract event
+                if filter_sc:
+                    contract_type = event.get('ContractType') or event.get('contractType')
+                    event_data = event.get('EventData', {})
+                    has_sc = event_data.get('smartContract') or event.get('smartContract')
+                    
+                    # Skip if not a smart contract transaction
+                    if contract_type != 'TriggerSmartContract' and not has_sc:
+                        logger.debug(f"Skipping non-SC event in SC filter mode")
+                        continue
+                
+                # Format and send the event
+                formatted_msg = format_event(event)
+                
+                # Only send if we have a valid formatted message
+                if formatted_msg:
+                    await bot.send_message(
+                        chat_id,
+                        formatted_msg,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
+                    )
+                else:
+                    logger.warning(f"Skipped empty or invalid event: {event}")
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode WebSocket message: {message}")
+                logger.error(f"JSON decode error: {e}")
+            except Exception as e:
+                logger.error(f"Error processing event: {e}", exc_info=True)
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     """Handle /start command"""
@@ -314,15 +469,18 @@ This bot helps you monitor Tron blockchain addresses in real-time on <b>Nile Tes
 
 <b>Available commands:</b>
 
-/monitor &lt;address&gt; - Start monitoring an address
-/stop_monitor &lt;address&gt; - Stop monitoring an address
+/monitor &lt;address&gt; - Monitor all transactions for an address
+/monitor_sc &lt;address&gt; - Monitor only smart contract interactions
+/monitor_allsc - Monitor all smart contracts globally
+/stop_monitor &lt;address|global&gt; - Stop monitoring
 /stop_all - Stop all active monitors
 /list - List all active monitors
 /help - Show this help message
 
 <b>Examples:</b>
 <code>/monitor TKfUiqAGByAHv8nmTzZqK3RxNc4p3yPqGf</code>
-<code>/monitor TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf</code> (Nile USDT)
+<code>/monitor_sc TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf</code> (Nile USDT - SC only)
+<code>/monitor_allsc</code> (All SC activity - high volume!)
 
 You'll receive real-time notifications for:
 • Incoming transactions
@@ -396,6 +554,97 @@ async def cmd_monitor(message: Message):
     logger.info(f"Started monitoring {address} for chat {chat_id}")
 
 
+@dp.message(Command("monitor_sc"))
+async def cmd_monitor_sc(message: Message):
+    """Handle /monitor_sc command - monitor only smart contract interactions"""
+    # Extract address from command
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "❌ Please provide an address to monitor for smart contract interactions.\n\n"
+            "<b>Usage:</b> <code>/monitor_sc &lt;address&gt;</code>\n\n"
+            "<b>Examples:</b>\n"
+            "<code>/monitor_sc TKfUiqAGByAHv8nmTzZqK3RxNc4p3yPqGf</code>\n"
+            "<code>/monitor_sc TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf</code> (Nile USDT)\n\n"
+            "<b>Note:</b> This will only show transactions involving smart contracts.\n"
+            "<b>Network:</b> Tron Nile Testnet",
+            parse_mode="HTML"
+        )
+        return
+    
+    address = parts[1].strip()
+    chat_id = message.chat.id
+    
+    # Validate address format (basic check)
+    if not address.startswith('T') or len(address) < 30:
+        await message.answer(
+            "❌ Invalid address format. Tron addresses should start with 'T' and be 34 characters long.\n\n"
+            "<b>Example:</b> <code>TKfUiqAGByAHv8nmTzZqK3RxNc4p3yPqGf</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Use a special key for SC monitors
+    sc_key = f"{address}_SC"
+    
+    # Check if already monitoring
+    if chat_id in active_monitors and sc_key in active_monitors[chat_id]:
+        await message.answer(
+            f"ℹ️ Already monitoring smart contract interactions for:\n<code>{address}</code>",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Start monitoring
+    await message.answer(
+        f"🔄 Starting smart contract monitor for:\n<code>{address}</code>\n\n"
+        f"Please wait...",
+        parse_mode="HTML"
+    )
+    
+    # Create monitoring task
+    task = asyncio.create_task(monitor_smart_contracts(chat_id, address))
+    
+    # Store the task with SC key
+    if chat_id not in active_monitors:
+        active_monitors[chat_id] = {}
+    active_monitors[chat_id][sc_key] = task
+    
+    logger.info(f"Started SC monitoring {address} for chat {chat_id}")
+
+
+@dp.message(Command("monitor_allsc"))
+async def cmd_monitor_allsc(message: Message):
+    """Handle /monitor_allsc command - monitor all smart contract interactions globally"""
+    chat_id = message.chat.id
+    
+    # Check if already monitoring
+    if chat_id in active_monitors and "GLOBAL_SC" in active_monitors[chat_id]:
+        await message.answer(
+            "ℹ️ Already monitoring global smart contract activity.",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Start monitoring
+    await message.answer(
+        "🔄 Starting global smart contract monitor...\n\n"
+        "📡 This will show smart contract interactions across the network via USDT contract.\n\n"
+        "⚠️ Note: High volume of events expected!",
+        parse_mode="HTML"
+    )
+    
+    # Create monitoring task
+    task = asyncio.create_task(monitor_all_smart_contracts(chat_id))
+    
+    # Store the task with GLOBAL_SC key
+    if chat_id not in active_monitors:
+        active_monitors[chat_id] = {}
+    active_monitors[chat_id]["GLOBAL_SC"] = task
+    
+    logger.info(f"Started global SC monitoring for chat {chat_id}")
+
+
 @dp.message(Command("stop_monitor"))
 async def cmd_stop_monitor(message: Message):
     """Handle /stop_monitor command"""
@@ -404,7 +653,8 @@ async def cmd_stop_monitor(message: Message):
     if len(parts) < 2:
         await message.answer(
             "❌ Please provide an address to stop monitoring.\n\n"
-            "<b>Usage:</b> <code>/stop_monitor &lt;address&gt;</code>",
+            "<b>Usage:</b> <code>/stop_monitor &lt;address|global&gt;</code>\n\n"
+            "Use <code>/stop_monitor global</code> to stop global SC monitor.",
             parse_mode="HTML"
         )
         return
@@ -412,8 +662,41 @@ async def cmd_stop_monitor(message: Message):
     address = parts[1].strip()
     chat_id = message.chat.id
     
-    # Check if monitoring this address
-    if chat_id not in active_monitors or address not in active_monitors[chat_id]:
+    # Check for global SC monitor
+    if address.lower() == "global":
+        if chat_id in active_monitors and "GLOBAL_SC" in active_monitors[chat_id]:
+            task = active_monitors[chat_id]["GLOBAL_SC"]
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            
+            if "GLOBAL_SC" in active_monitors[chat_id]:
+                del active_monitors[chat_id]["GLOBAL_SC"]
+            if not active_monitors[chat_id]:
+                del active_monitors[chat_id]
+            
+            await message.answer("✅ Stopped global smart contract monitor", parse_mode="HTML")
+            logger.info(f"Stopped global SC monitor for chat {chat_id}")
+        else:
+            await message.answer("ℹ️ Global SC monitor is not running.", parse_mode="HTML")
+        return
+    
+    # Check for both regular and SC monitors
+    sc_key = f"{address}_SC"
+    address_key = None
+    monitor_type = ""
+    
+    if chat_id in active_monitors:
+        if address in active_monitors[chat_id]:
+            address_key = address
+            monitor_type = ""
+        elif sc_key in active_monitors[chat_id]:
+            address_key = sc_key
+            monitor_type = " (SC only)"
+    
+    if not address_key:
         await message.answer(
             f"ℹ️ Not currently monitoring address:\n<code>{address}</code>",
             parse_mode="HTML"
@@ -421,7 +704,7 @@ async def cmd_stop_monitor(message: Message):
         return
     
     # Stop the monitoring task
-    task = active_monitors[chat_id][address]
+    task = active_monitors[chat_id][address_key]
     task.cancel()
     
     try:
@@ -430,12 +713,12 @@ async def cmd_stop_monitor(message: Message):
         pass
     
     # Remove from active monitors
-    del active_monitors[chat_id][address]
+    del active_monitors[chat_id][address_key]
     if not active_monitors[chat_id]:
         del active_monitors[chat_id]
     
     await message.answer(
-        f"✅ Stopped monitoring address:\n<code>{address}</code>",
+        f"✅ Stopped monitoring{monitor_type} address:\n<code>{address}</code>",
         parse_mode="HTML"
     )
     
@@ -455,15 +738,17 @@ async def cmd_stop_all(message: Message):
     # Stop all monitoring tasks
     addresses = list(active_monitors[chat_id].keys())
     for address in addresses:
-        task = active_monitors[chat_id][address]
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if address in active_monitors[chat_id]:  # Check if still exists
+            task = active_monitors[chat_id][address]
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     
-    # Clear all monitors for this chat
-    del active_monitors[chat_id]
+    # Clear all monitors for this chat (check if still exists)
+    if chat_id in active_monitors:
+        del active_monitors[chat_id]
     
     await message.answer(
         f"✅ Stopped all monitors ({len(addresses)} addresses):\n\n" +
@@ -488,10 +773,20 @@ async def cmd_list(message: Message):
     addresses = list(active_monitors[chat_id].keys())
     
     msg = f"📋 <b>Active Monitors ({len(addresses)}):</b>\n\n"
-    for i, address in enumerate(addresses, 1):
-        msg += f"{i}. <code>{address}</code>\n"
+    for i, address_key in enumerate(addresses, 1):
+        if address_key == "GLOBAL_SC":
+            # Global SC monitor
+            msg += f"{i}. 🌐 Global Smart Contract Monitor\n"
+        elif address_key.endswith('_SC'):
+            # Smart contract only monitor
+            address = address_key[:-3]  # Remove _SC suffix
+            msg += f"{i}. <code>{address}</code> 🔍 (SC only)\n"
+        else:
+            # Regular monitor
+            msg += f"{i}. <code>{address_key}</code>\n"
     
     msg += f"\n💡 Use <code>/stop_monitor &lt;address&gt;</code> to stop a specific monitor"
+    msg += f"\n💡 Use <code>/stop_monitor global</code> to stop global SC monitor"
     msg += f"\n💡 Use <code>/stop_all</code> to stop all monitors"
     
     await message.answer(msg, parse_mode="HTML")
