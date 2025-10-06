@@ -88,6 +88,114 @@ class EventMonitor:
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
     
+    def display_smart_contract_info(self, smart_contract: dict):
+        """Display decoded smart contract information in human-readable format"""
+        print(f"\n{'─'*80}")
+        print(f"🔍 SMART CONTRACT CALL DECODED:")
+        print(f"{'─'*80}")
+        
+        method_name = smart_contract.get("methodName", "Unknown")
+        method_sig = smart_contract.get("methodSignature", "N/A")
+        addresses = smart_contract.get("addresses", [])
+        parameters = smart_contract.get("parameters", {})
+        amount = smart_contract.get("amount")
+        
+        # Display method information
+        print(f"📝 Function:     {method_name}")
+        print(f"🔑 Signature:    0x{method_sig}")
+        
+        # Parse and display function parameters in human-readable format
+        if "transfer(address,uint256)" in method_name:
+            print(f"\n💸 TOKEN TRANSFER:")
+            if len(addresses) > 0:
+                recipient = addresses[0]
+                recipient_readable = hex_to_tron_address(recipient)
+                print(f"   To (hex):     {recipient}")
+                print(f"   To:           {recipient_readable}")
+            if amount:
+                # Try to format amount (assuming USDT with 6 decimals)
+                try:
+                    amount_int = int(amount)
+                    amount_formatted = amount_int / 1_000_000
+                    print(f"   Amount:       {amount_formatted:,.6f} tokens")
+                    print(f"   Amount (raw): {amount}")
+                except:
+                    print(f"   Amount:       {amount}")
+        
+        elif "transferFrom(address,address,uint256)" in method_name:
+            print(f"\n💸 TOKEN TRANSFER (Approved):")
+            if len(addresses) >= 2:
+                from_addr = addresses[0]
+                to_addr = addresses[1]
+                from_readable = hex_to_tron_address(from_addr)
+                to_readable = hex_to_tron_address(to_addr)
+                print(f"   From (hex):   {from_addr}")
+                print(f"   From:         {from_readable}")
+                print(f"   To (hex):     {to_addr}")
+                print(f"   To:           {to_readable}")
+            if amount:
+                try:
+                    amount_int = int(amount)
+                    amount_formatted = amount_int / 1_000_000
+                    print(f"   Amount:       {amount_formatted:,.6f} tokens")
+                    print(f"   Amount (raw): {amount}")
+                except:
+                    print(f"   Amount:       {amount}")
+        
+        elif "approve(address,uint256)" in method_name:
+            print(f"\n✅ TOKEN APPROVAL:")
+            if len(addresses) > 0:
+                spender = addresses[0]
+                spender_readable = hex_to_tron_address(spender)
+                print(f"   Spender (hex): {spender}")
+                print(f"   Spender:       {spender_readable}")
+            if amount:
+                try:
+                    amount_int = int(amount)
+                    amount_formatted = amount_int / 1_000_000
+                    print(f"   Allowance:     {amount_formatted:,.6f} tokens")
+                    print(f"   Allowance (raw): {amount}")
+                except:
+                    print(f"   Allowance:     {amount}")
+        
+        elif "balanceOf(address)" in method_name:
+            print(f"\n💰 BALANCE QUERY:")
+            if len(addresses) > 0:
+                owner = addresses[0]
+                owner_readable = hex_to_tron_address(owner)
+                print(f"   Owner (hex):  {owner}")
+                print(f"   Owner:        {owner_readable}")
+        
+        elif "allowance(address,address)" in method_name:
+            print(f"\n🔍 ALLOWANCE QUERY:")
+            if len(addresses) >= 2:
+                owner = addresses[0]
+                spender = addresses[1]
+                owner_readable = hex_to_tron_address(owner)
+                spender_readable = hex_to_tron_address(spender)
+                print(f"   Owner (hex):  {owner}")
+                print(f"   Owner:        {owner_readable}")
+                print(f"   Spender (hex): {spender}")
+                print(f"   Spender:      {spender_readable}")
+        
+        else:
+            # Generic display for unknown methods
+            print(f"\n📋 PARAMETERS:")
+            if addresses:
+                print(f"   Addresses extracted:")
+                for i, addr in enumerate(addresses):
+                    readable = hex_to_tron_address(addr)
+                    print(f"      [{i}] {addr}")
+                    print(f"          {readable}")
+            if parameters:
+                print(f"   Other parameters:")
+                for key, value in parameters.items():
+                    print(f"      {key}: {value}")
+            if amount:
+                print(f"   Amount: {amount}")
+        
+        print(f"{'─'*80}")
+    
     def setup_file_logger(self):
         """Setup file logger to save all events to a file"""
         log_filename = f"events_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -226,6 +334,11 @@ class EventMonitor:
         print(f"📦 Block:       {block_number}")
         print(f"⏰ Time:        {time_str}")
         
+        # Display smart contract decoded information if available
+        smart_contract = event.get("smartContract")
+        if smart_contract:
+            self.display_smart_contract_info(smart_contract)
+        
         # Log full raw event data as JSON
         print(f"\n{'─'*80}")
         print(f"📋 FULL EVENT DATA (JSON):")
@@ -280,7 +393,7 @@ class EventMonitor:
         print(f"\n{'='*80}\n")
     
     def display_transaction_event(self, event_data: dict, count: int):
-        """Display transaction event with human-readable addresses"""
+        """Display transaction event with human-readable addresses and smart contract decoding"""
         # Log to file immediately
         self.file_logger.info(f"TRANSACTION EVENT #{count} - {json.dumps(event_data, indent=2)}")
         
@@ -293,6 +406,7 @@ class EventMonitor:
         amount = event_data.get("Amount", 0)
         contract_type = event_data.get("ContractType", "Unknown")
         success = event_data.get("Success", False)
+        event_data_dict = event_data.get("EventData", {})
         
         # Convert addresses to human-readable format
         from_readable = hex_to_tron_address(from_hex) if from_hex != "N/A" else "N/A"
@@ -324,6 +438,11 @@ class EventMonitor:
         print(f"   To:          {to_readable}")
         if amount > 0:
             print(f"   Amount:      {amount}")
+        
+        # Display smart contract decoded information if available
+        smart_contract = event_data_dict.get("smartContract")
+        if smart_contract:
+            self.display_smart_contract_info(smart_contract)
         
         # Log full raw event data as JSON
         print(f"\n{'─'*80}")

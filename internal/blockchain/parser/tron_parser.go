@@ -29,6 +29,36 @@ func NewTronParser(log *logger.Logger) *TronParser {
 	}
 }
 
+// DecodeSmartContract decodes smart contract call data and returns decoded information
+// Returns nil if not a smart contract call or if decoding fails
+func (p *TronParser) DecodeSmartContract(contract *core.Transaction_Contract) *DecodedCall {
+	if contract == nil || contract.GetType() != core.Transaction_Contract_TriggerSmartContract {
+		return nil
+	}
+
+	var trigger core.TriggerSmartContract
+	if err := proto.Unmarshal(contract.GetParameter().GetValue(), &trigger); err != nil {
+		p.logger.Debug().Err(err).Msg("Failed to unmarshal TriggerSmartContract")
+		return nil
+	}
+
+	callData := trigger.GetData()
+	if len(callData) < 4 {
+		return nil
+	}
+
+	decoded, err := p.abiDecoder.DecodeContractData(callData)
+	if err != nil {
+		p.logger.Debug().
+			Err(err).
+			Str("methodSig", hex.EncodeToString(callData[:4])).
+			Msg("Could not decode contract data")
+		return nil
+	}
+
+	return decoded
+}
+
 // ExtractAddresses extracts all addresses from a contract
 func (p *TronParser) ExtractAddresses(contract *core.Transaction_Contract) []string {
 	if contract == nil {

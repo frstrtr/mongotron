@@ -348,6 +348,19 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 		event.From = from
 		event.To = to
 		event.Amount = amount
+
+		// Decode smart contract call data if available
+		if decoded := m.parser.DecodeSmartContract(contract); decoded != nil {
+			event.EventData["smartContract"] = map[string]interface{}{
+				"methodSignature": decoded.MethodSignature,
+				"methodName":      decoded.MethodName,
+				"addresses":       decoded.Addresses,
+				"parameters":      decoded.Parameters,
+			}
+			if decoded.Amount != nil {
+				event.EventData["smartContract"].(map[string]interface{})["amount"] = decoded.Amount.String()
+			}
+		}
 	}
 
 	// Extract transaction result from txInfo
