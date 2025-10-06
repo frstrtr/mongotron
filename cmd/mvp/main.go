@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	defaultNetwork     = "tron-nile"
+	defaultNetwork      = "tron-nile"
 	defaultPollInterval = 3 * time.Second
 )
 
@@ -40,12 +40,12 @@ func hexToBase58Address(hexAddr string) string {
 	}
 	// Remove 0x prefix if present
 	hexAddr = strings.TrimPrefix(hexAddr, "0x")
-	
+
 	// Special case for contract creation
 	if hexAddr == "CreateSmartContract" {
 		return "CreateSmartContract"
 	}
-	
+
 	// Convert to address and then to Base58
 	addr := address.HexToAddress(hexAddr)
 	base58 := common.EncodeCheck(addr.Bytes())
@@ -60,29 +60,29 @@ func getTransactionTypeDisplay(contractType string) string {
 		"UpdateAccountContract":           "Update Account",
 		"SetAccountIdContract":            "Set Account ID",
 		"AccountPermissionUpdateContract": "Update Permissions",
-		
+
 		// TRX Transfers
 		"TransferContract": "Transfer (TRX)",
-		
+
 		// TRC10 Token Operations
-		"TransferAssetContract":          "Transfer (TRC10)",
-		"AssetIssueContract":             "Issue Token (TRC10)",
-		"UpdateAssetContract":            "Update Token (TRC10)",
-		"UnfreezeAssetContract":          "Unfreeze Token (TRC10)",
-		"ParticipateAssetIssueContract":  "Participate Token Sale",
-		
+		"TransferAssetContract":         "Transfer (TRC10)",
+		"AssetIssueContract":            "Issue Token (TRC10)",
+		"UpdateAssetContract":           "Update Token (TRC10)",
+		"UnfreezeAssetContract":         "Unfreeze Token (TRC10)",
+		"ParticipateAssetIssueContract": "Participate Token Sale",
+
 		// Smart Contract Operations
-		"TriggerSmartContract":    "Smart Contract",
-		"CreateSmartContract":     "Create Contract",
+		"TriggerSmartContract":      "Smart Contract",
+		"CreateSmartContract":       "Create Contract",
 		"UpdateEnergyLimitContract": "Update Energy Limit",
 		"ClearABIContract":          "Clear Contract ABI",
 		"UpdateSettingContract":     "Update Contract Setting",
 		"UpdateBrokerageContract":   "Update Brokerage",
-		
+
 		// Resource Management (Staking v1)
 		"FreezeBalanceContract":   "Freeze Balance",
 		"UnfreezeBalanceContract": "Unfreeze Balance",
-		
+
 		// Resource Management (Staking v2)
 		"FreezeBalanceV2Contract":        "Stake (v2)",
 		"UnfreezeBalanceV2Contract":      "Unstake (v2)",
@@ -90,36 +90,36 @@ func getTransactionTypeDisplay(contractType string) string {
 		"UnDelegateResourceContract":     "Undelegate Resource",
 		"WithdrawExpireUnfreezeContract": "Withdraw Unstaked",
 		"CancelAllUnfreezeV2Contract":    "Cancel All Unstake",
-		
+
 		// Witness Operations
-		"WitnessCreateContract": "Create Witness",
-		"WitnessUpdateContract": "Update Witness",
-		"VoteWitnessContract":   "Vote Witness",
+		"WitnessCreateContract":   "Create Witness",
+		"WitnessUpdateContract":   "Update Witness",
+		"VoteWitnessContract":     "Vote Witness",
 		"WithdrawBalanceContract": "Withdraw Rewards",
-		
+
 		// Proposal Operations
 		"ProposalCreateContract":  "Create Proposal",
 		"ProposalApproveContract": "Approve Proposal",
 		"ProposalDeleteContract":  "Delete Proposal",
-		
+
 		// Exchange Operations (DEX)
 		"ExchangeCreateContract":      "Create Exchange",
 		"ExchangeInjectContract":      "Inject Exchange",
 		"ExchangeWithdrawContract":    "Withdraw Exchange",
 		"ExchangeTransactionContract": "Exchange Trade",
-		
+
 		// Shield (Privacy) Operations
 		"ShieldedTransferContract": "Shielded Transfer",
-		
+
 		// Market Operations
 		"MarketSellAssetContract":   "Market Sell",
 		"MarketCancelOrderContract": "Market Cancel Order",
 	}
-	
+
 	if display, ok := typeMap[contractType]; ok {
 		return display
 	}
-	
+
 	// If unknown, return the raw type
 	return contractType
 }
@@ -151,18 +151,18 @@ func getSmartContractInteraction(contractAddressHex string, contractData map[str
 
 	// Convert hex address to base58
 	contractAddress := hexToBase58Address(contractAddressHex)
-	
+
 	// Try to load ABI if not cached
 	if !abiDecoder.HasABI(contractAddress) && tronClient != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		
+
 		// Decode hex address
 		addressBytes, err := hex.DecodeString(strings.TrimPrefix(contractAddressHex, "41"))
 		if err == nil {
 			// Prepend 0x41 for Tron address
 			fullAddress := append([]byte{0x41}, addressBytes...)
-			
+
 			// Fetch contract info
 			smartContract, err := tronClient.GetContract(ctx, fullAddress)
 			if err == nil && smartContract != nil && smartContract.GetAbi() != nil {
@@ -389,7 +389,7 @@ func runSingleAddressMonitor(ctx context.Context, tronClient *client.TronClient,
 			lastReported := int64(-1)
 			ticker := time.NewTicker(500 * time.Millisecond) // Check twice per second
 			defer ticker.Stop()
-			
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -518,7 +518,7 @@ func processEvents(ctx context.Context, mon *monitor.AddressMonitor, db *storage
 				Str("txHash", event.TransactionHash).
 				Str("TronTXType", tronTxType).
 				Str("contractType", event.ContractType)
-			
+
 			// If it's a smart contract interaction, try to decode it and add SCTXType
 			if event.ContractType == "TriggerSmartContract" && event.RawTransaction != nil {
 				// Extract contract data from raw transaction
@@ -535,7 +535,29 @@ func processEvents(ctx context.Context, mon *monitor.AddressMonitor, db *storage
 					}
 				}
 			}
-			
+
+			// Add smart contract decoded information if available
+			if smartContract, ok := event.EventData["smartContract"].(map[string]interface{}); ok {
+				if methodName, ok := smartContract["methodName"].(string); ok {
+					logEvent = logEvent.Str("decodedMethod", methodName)
+				}
+				if methodSig, ok := smartContract["methodSignature"].(string); ok {
+					logEvent = logEvent.Str("methodSignature", methodSig)
+				}
+				if addresses, ok := smartContract["addresses"].([]string); ok && len(addresses) > 0 {
+					logEvent = logEvent.Strs("paramAddresses", addresses)
+					// Convert to base58 for readability
+					readableAddrs := make([]string, len(addresses))
+					for i, addr := range addresses {
+						readableAddrs[i] = hexToBase58Address(addr)
+					}
+					logEvent = logEvent.Strs("paramAddressesReadable", readableAddrs)
+				}
+				if amount, ok := smartContract["amount"].(string); ok && amount != "" {
+					logEvent = logEvent.Str("decodedAmount", amount)
+				}
+			}
+
 			logEvent.
 				Str("from", hexToBase58Address(event.From)).
 				Str("fromHex", event.From).
@@ -550,7 +572,7 @@ func processEvents(ctx context.Context, mon *monitor.AddressMonitor, db *storage
 				Int64("block", event.BlockNumber).
 				Str("txHash", event.TransactionHash).
 				Str("TronTXType", tronTxType)
-			
+
 			// If it's a smart contract interaction, try to decode it and add SCTXType
 			if event.ContractType == "TriggerSmartContract" && event.RawTransaction != nil {
 				txRaw := event.RawTransaction.GetRawData()
@@ -565,8 +587,15 @@ func processEvents(ctx context.Context, mon *monitor.AddressMonitor, db *storage
 						logEvent = logEvent.Str("SCTXType", scInteractionType)
 					}
 				}
+
+				// Add decoded method name for smart contracts
+				if smartContract, ok := event.EventData["smartContract"].(map[string]interface{}); ok {
+					if methodName, ok := smartContract["methodName"].(string); ok {
+						logEvent = logEvent.Str("decodedMethod", methodName)
+					}
+				}
 			}
-			
+
 			logEvent.
 				Str("from", hexToBase58Address(event.From)).
 				Str("to", hexToBase58Address(event.To)).
@@ -628,12 +657,12 @@ func storeEvent(ctx context.Context, event *monitor.AddressEvent, db *storage.Da
 
 		if verbose {
 			tronTxType := getTransactionTypeDisplay(event.ContractType)
-			
+
 			logEvent := log.Info().
 				Str("txHash", event.TransactionHash).
 				Str("TronTXType", tronTxType).
 				Str("contractType", event.ContractType)
-			
+
 			// If it's a smart contract interaction, try to decode it and add SCTXType
 			if event.ContractType == "TriggerSmartContract" && event.RawTransaction != nil {
 				txRaw := event.RawTransaction.GetRawData()
@@ -649,7 +678,7 @@ func storeEvent(ctx context.Context, event *monitor.AddressEvent, db *storage.Da
 					}
 				}
 			}
-			
+
 			logEvent.
 				Str("from", hexToBase58Address(event.From)).
 				Str("fromHex", event.From).
@@ -734,7 +763,7 @@ func storeBlockEvent(ctx context.Context, blockEvent *monitor.BlockEvent, db *st
 			Int("addressCount", len(blockEvent.Addresses)).
 			Int("txCount", len(blockEvent.Transactions)).
 			Msg("Processing block data")
-		
+
 		// List all transactions in this block
 		if len(blockEvent.Transactions) > 0 {
 			log.Info().
@@ -742,21 +771,43 @@ func storeBlockEvent(ctx context.Context, blockEvent *monitor.BlockEvent, db *st
 				Msg("=== Block Transactions ===")
 			for i, txData := range blockEvent.Transactions {
 				tronTxType := getTransactionTypeDisplay(txData.ContractType)
-				
+
 				logEvent := log.Info().
 					Int("txIndex", i+1).
 					Str("txHash", txData.TxHash).
 					Str("TronTXType", tronTxType).
 					Str("contractType", txData.ContractType)
-				
+
 				// If it's a smart contract interaction, try to decode it and add SCTXType
 				if txData.ContractType == "TriggerSmartContract" && len(txData.ContractData) > 0 {
 					scInteractionType := getSmartContractInteraction(txData.ToAddress, txData.ContractData, verbose, log)
 					if scInteractionType != "Smart Contract" {
 						logEvent = logEvent.Str("SCTXType", scInteractionType)
 					}
+
+					// Add decoded smart contract information if available
+					if smartContract, ok := txData.ContractData["smartContract"].(map[string]interface{}); ok {
+						if methodName, ok := smartContract["methodName"].(string); ok {
+							logEvent = logEvent.Str("decodedMethod", methodName)
+						}
+						if methodSig, ok := smartContract["methodSignature"].(string); ok {
+							logEvent = logEvent.Str("methodSignature", methodSig)
+						}
+						if addresses, ok := smartContract["addresses"].([]string); ok && len(addresses) > 0 {
+							logEvent = logEvent.Strs("paramAddresses", addresses)
+							// Convert to base58 for readability
+							readableAddrs := make([]string, len(addresses))
+							for j, addr := range addresses {
+								readableAddrs[j] = hexToBase58Address(addr)
+							}
+							logEvent = logEvent.Strs("paramAddressesReadable", readableAddrs)
+						}
+						if amount, ok := smartContract["amount"].(string); ok && amount != "" {
+							logEvent = logEvent.Str("decodedAmount", amount)
+						}
+					}
 				}
-				
+
 				logEvent.
 					Str("from", hexToBase58Address(txData.FromAddress)).
 					Str("to", hexToBase58Address(txData.ToAddress)).
@@ -919,12 +970,12 @@ func storeTransactionData(ctx context.Context, txData *monitor.TransactionData, 
 
 	if verbose {
 		tronTxType := getTransactionTypeDisplay(txData.ContractType)
-		
+
 		logEvent := log.Info().
 			Str("txHash", txData.TxHash).
 			Str("TronTXType", tronTxType).
 			Str("contractType", txData.ContractType)
-		
+
 		// If it's a smart contract interaction, try to decode it and add SCTXType
 		if txData.ContractType == "TriggerSmartContract" && len(txData.ContractData) > 0 {
 			scInteractionType := getSmartContractInteraction(txData.ToAddress, txData.ContractData, verbose, log)
@@ -932,7 +983,7 @@ func storeTransactionData(ctx context.Context, txData *monitor.TransactionData, 
 				logEvent = logEvent.Str("SCTXType", scInteractionType)
 			}
 		}
-		
+
 		logEvent.
 			Str("from", hexToBase58Address(txData.FromAddress)).
 			Str("fromHex", txData.FromAddress).
@@ -987,14 +1038,13 @@ func storeTransactionData(ctx context.Context, txData *monitor.TransactionData, 
 
 // isDuplicateKeyError checks if the error is a MongoDB duplicate key error
 func isDuplicateKeyError(err error) bool {
-	return err != nil && (
-		containsString(err.Error(), "duplicate key error") ||
+	return err != nil && (containsString(err.Error(), "duplicate key error") ||
 		containsString(err.Error(), "E11000"))
 }
 
 // containsString checks if a string contains a substring
 func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || 
+	return len(s) >= len(substr) && (s == substr ||
 		len(s) > len(substr) && findSubstring(s, substr))
 }
 

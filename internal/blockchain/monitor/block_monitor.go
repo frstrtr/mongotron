@@ -52,22 +52,22 @@ type AddressInfo struct {
 
 // TransactionData contains detailed transaction information
 type TransactionData struct {
-	TxHash          string
-	TxID            string
-	FromAddress     string
-	ToAddress       string
-	Amount          int64
-	ContractType    string
-	Success         bool
-	EnergyUsage     int64
-	EnergyFee       int64
-	NetUsage        int64
-	NetFee          int64
-	ContractData    map[string]interface{}
-	Logs            []map[string]interface{}
-	InternalTxs     []map[string]interface{}
-	RawTransaction  *core.Transaction
-	RawTxInfo       *core.TransactionInfo
+	TxHash         string
+	TxID           string
+	FromAddress    string
+	ToAddress      string
+	Amount         int64
+	ContractType   string
+	Success        bool
+	EnergyUsage    int64
+	EnergyFee      int64
+	NetUsage       int64
+	NetFee         int64
+	ContractData   map[string]interface{}
+	Logs           []map[string]interface{}
+	InternalTxs    []map[string]interface{}
+	RawTransaction *core.Transaction
+	RawTxInfo      *core.TransactionInfo
 }
 
 // BlockMonitorConfig holds block monitor configuration
@@ -341,6 +341,19 @@ func (m *BlockMonitor) extractTransactionData(ctx context.Context, block *core.B
 		// Extract additional contract data
 		txData.ContractData["type"] = txData.ContractType
 		txData.ContractData["parameter"] = contract.GetParameter()
+
+		// Decode smart contract call data if available
+		if decoded := m.parser.DecodeSmartContract(contract); decoded != nil {
+			txData.ContractData["smartContract"] = map[string]interface{}{
+				"methodSignature": decoded.MethodSignature,
+				"methodName":      decoded.MethodName,
+				"addresses":       decoded.Addresses,
+				"parameters":      decoded.Parameters,
+			}
+			if decoded.Amount != nil {
+				txData.ContractData["smartContract"].(map[string]interface{})["amount"] = decoded.Amount.String()
+			}
+		}
 	}
 
 	// Extract transaction info details
