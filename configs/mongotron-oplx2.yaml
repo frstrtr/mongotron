@@ -56,7 +56,7 @@ webhooks:
     enabled: true
     baseUrl: "${PORTO_API_URL:http://oplex7020:8000}"
     webhookPath: "/v1/webhooks/mongotron/transfer"
-    webhookSecret: "b86d1984950a579a1c19d549745b8565037bcfb16afe2f3ec6a09af6484cffcd"
+    webhookSecret: "${MONGOTRON_WEBHOOK_SECRET:default-secret-change-me}"
     network: "tron-nile"
 
 api:

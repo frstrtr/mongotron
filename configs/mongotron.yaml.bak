@@ -1,4 +1,4 @@
-# MongoTron Configuration for oplx2 (Nile Testnet Full Archive Node)
+# MongoTron Configuration for nileVM.lan Test Environment
 
 server:
   host: 0.0.0.0
@@ -9,7 +9,7 @@ server:
 
 database:
   mongodb:
-    uri: mongodb://localhost:27017/mongotron
+    uri: mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron
     database: mongotron
     collections:
       addresses: addresses
@@ -20,7 +20,7 @@ database:
 blockchain:
   tron:
     node:
-      host: localhost
+      host: nileVM.lan
       port: 50051
       use_tls: false
     connection:
@@ -53,11 +53,11 @@ webhooks:
     retry_attempts: 3
   # Porto API Integration for USDT/TRC20 transfer monitoring
   porto:
-    enabled: true
-    baseUrl: "${PORTO_API_URL:http://oplex7020:8000}"
-    webhookPath: "/v1/webhooks/mongotron/transfer"
-    webhookSecret: "b86d1984950a579a1c19d549745b8565037bcfb16afe2f3ec6a09af6484cffcd"
-    network: "tron-nile"
+    enabled: true  # Enable Porto API webhooks
+    baseUrl: "${PORTO_API_URL:http://localhost:8000}"  # Porto API base URL
+    webhookPath: "/v1/webhooks/mongotron/transfer"  # Webhook endpoint path
+    webhookSecret: "${MONGOTRON_WEBHOOK_SECRET:default-secret-change-me}"  # HMAC secret for signing webhooks
+    network: "tron-nile"  # "tron-mainnet" or "tron-nile"
 
 api:
   version: v1

@@ -102,22 +102,27 @@ func (c *PortoAPIClient) SendTransferNotification(ctx context.Context, event *Po
 	// Create webhook URL using configured path
 	webhookURL := c.baseURL + c.webhookPath
 
-	// Create request
-	req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-MongoTron-Event", "trc20_transfer")
-	req.Header.Set("X-MongoTron-Signature", c.signPayload(payload))
-	req.Header.Set("X-MongoTron-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
-	req.Header.Set("X-Subscription-ID", event.SubscriptionID)
+	// Pre-compute signature and headers (before retry loop)
+	signature := c.signPayload(payload)
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	subscriptionID := event.SubscriptionID
 
 	// Send request with retries
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		// Create fresh request for each attempt (body reader must be fresh)
+		req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		// Set headers
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-MongoTron-Event", "trc20_transfer")
+		req.Header.Set("X-MongoTron-Signature", signature)
+		req.Header.Set("X-MongoTron-Timestamp", timestamp)
+		req.Header.Set("X-Subscription-ID", subscriptionID)
+
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
