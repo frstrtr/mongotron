@@ -151,6 +151,7 @@ func (m *Manager) Subscribe(address string, webhookURL string, filters models.Su
 }
 
 // Unsubscribe stops monitoring and marks subscription as stopped
+// Records the last seen block for potential gap scanning on resubscribe
 func (m *Manager) Unsubscribe(subscriptionID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -160,15 +161,22 @@ func (m *Manager) Unsubscribe(subscriptionID string) error {
 		return fmt.Errorf("subscription not found")
 	}
 
+	// Get the last processed block from the monitor before stopping
+	lastBlock := wrapper.Monitor.GetLastBlockNumber()
+	if lastBlock == 0 {
+		lastBlock = wrapper.Subscription.CurrentBlock
+	}
+
 	// Stop the monitor
 	m.stopMonitorUnsafe(wrapper)
 
-	// Update database
-	if err := m.db.SubscriptionRepo.UpdateStatus(m.ctx, wrapper.Subscription.ID, "stopped"); err != nil {
+	// Update database with status AND last seen block (for gap scanning on resubscribe)
+	if err := m.db.SubscriptionRepo.UpdateStatusWithBlock(m.ctx, wrapper.Subscription.ID, "stopped", lastBlock); err != nil {
 		m.logger.Error().
 			Err(err).
 			Str("subscriptionId", subscriptionID).
-			Msg("Failed to update subscription status")
+			Int64("lastSeenBlock", lastBlock).
+			Msg("Failed to update subscription status with last block")
 	}
 
 	// Remove from active monitors
@@ -176,9 +184,113 @@ func (m *Manager) Unsubscribe(subscriptionID string) error {
 
 	m.logger.Info().
 		Str("subscriptionId", subscriptionID).
-		Msg("Subscription stopped")
+		Int64("lastSeenBlock", lastBlock).
+		Msg("Subscription stopped - last seen block recorded for gap scanning")
 
 	return nil
+}
+
+// ResubscribeResult contains the result of a resubscription operation
+type ResubscribeResult struct {
+	Subscription *models.Subscription
+	GapDetected  bool
+	GapStart     int64
+	GapEnd       int64
+	GapScanning  bool
+}
+
+// Resubscribe reactivates a stopped subscription and optionally scans the gap
+// If the address was previously subscribed and stopped, it will:
+// 1. Detect the gap between lastSeenBlock and current block
+// 2. Start monitoring from current block
+// 3. Trigger background scan to fill the gap
+func (m *Manager) Resubscribe(address string, webhookURL string, filters models.SubscriptionFilters, scanGap bool) (*ResubscribeResult, error) {
+	// Find existing stopped subscription for this address
+	subs, err := m.db.SubscriptionRepo.FindByAddress(m.ctx, address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup address: %w", err)
+	}
+
+	var stoppedSub *models.Subscription
+	for _, sub := range subs {
+		if sub.Status == "stopped" && sub.LastSeenBlock > 0 {
+			stoppedSub = sub
+			break
+		}
+	}
+
+	// Get current block from tron client
+	block, err := m.tronClient.GetNowBlock(m.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current block: %w", err)
+	}
+	currentBlock := block.BlockHeader.RawData.Number
+
+	result := &ResubscribeResult{}
+
+	if stoppedSub != nil {
+		// Found a previously stopped subscription - detect gap
+		result.GapDetected = true
+		result.GapStart = stoppedSub.LastSeenBlock
+		result.GapEnd = currentBlock
+
+		m.logger.Info().
+			Str("address", address).
+			Int64("gapStart", result.GapStart).
+			Int64("gapEnd", result.GapEnd).
+			Int64("gapBlocks", result.GapEnd-result.GapStart).
+			Msg("Gap detected for resubscription")
+
+		// Reactivate the existing subscription
+		stoppedSub.Status = "active"
+		stoppedSub.WebhookURL = webhookURL
+		stoppedSub.Filters = filters
+		stoppedSub.CurrentBlock = currentBlock
+
+		if err := m.db.SubscriptionRepo.Update(m.ctx, stoppedSub); err != nil {
+			return nil, fmt.Errorf("failed to reactivate subscription: %w", err)
+		}
+
+		// Start monitoring from current block
+		if err := m.startMonitor(stoppedSub); err != nil {
+			return nil, fmt.Errorf("failed to start monitor: %w", err)
+		}
+
+		result.Subscription = stoppedSub
+
+		// Trigger gap scan if requested
+		if scanGap && result.GapStart > 0 && result.GapEnd > result.GapStart {
+			result.GapScanning = true
+			go func() {
+				m.logger.Info().
+					Str("subscriptionId", stoppedSub.SubscriptionID).
+					Int64("startBlock", result.GapStart).
+					Int64("endBlock", result.GapEnd).
+					Msg("Starting background gap scan")
+
+				if err := m.ScanHistorical(stoppedSub.SubscriptionID, result.GapStart, result.GapEnd); err != nil {
+					m.logger.Error().
+						Err(err).
+						Str("subscriptionId", stoppedSub.SubscriptionID).
+						Msg("Gap scan failed")
+				} else {
+					m.logger.Info().
+						Str("subscriptionId", stoppedSub.SubscriptionID).
+						Msg("Gap scan completed successfully")
+				}
+			}()
+		}
+	} else {
+		// No previous subscription - create new one
+		sub, err := m.Subscribe(address, webhookURL, filters, -1) // -1 = current block
+		if err != nil {
+			return nil, err
+		}
+		result.Subscription = sub
+		result.GapDetected = false
+	}
+
+	return result, nil
 }
 
 // GetSubscription retrieves a subscription by ID

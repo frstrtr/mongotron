@@ -78,6 +78,8 @@ type Subscription struct {
 	LastEventAt    *time.Time          `bson:"last_event_at,omitempty" json:"lastEventAt,omitempty"`
 	StartBlock     int64               `bson:"start_block" json:"startBlock"`
 	CurrentBlock   int64               `bson:"current_block" json:"currentBlock"`
+	LastSeenBlock  int64               `bson:"last_seen_block,omitempty" json:"lastSeenBlock,omitempty"` // Block when stopped (for gap scanning)
+	StoppedAt      *time.Time          `bson:"stopped_at,omitempty" json:"stoppedAt,omitempty"`          // Timestamp when stopped
 	CreatedAt      time.Time           `bson:"created_at" json:"createdAt"`
 	UpdatedAt      time.Time           `bson:"updated_at" json:"updatedAt"`
 }

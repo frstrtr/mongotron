@@ -80,6 +80,27 @@ type BulkFailure struct {
 	Error   string `json:"error"`
 }
 
+// ResubscribeRequest represents a request to resubscribe an address
+type ResubscribeRequest struct {
+	Address    string     `json:"address" validate:"required"`
+	WalletType WalletType `json:"walletType,omitempty"`
+	WebhookURL string     `json:"webhookUrl,omitempty"`
+	ScanGap    bool       `json:"scanGap"` // Whether to scan for missed transactions during unsubscribed period
+}
+
+// ResubscribeResponse represents the response for a resubscription
+type ResubscribeResponse struct {
+	SubscriptionID string `json:"subscriptionId"`
+	Address        string `json:"address"`
+	Status         string `json:"status"`
+	GapDetected    bool   `json:"gapDetected"`
+	GapStart       int64  `json:"gapStart,omitempty"`
+	GapEnd         int64  `json:"gapEnd,omitempty"`
+	GapBlocks      int64  `json:"gapBlocks,omitempty"`
+	GapScanning    bool   `json:"gapScanning"` // True if background gap scan was started
+	Message        string `json:"message"`
+}
+
 // AddToWatchList handles POST /api/v1/watchlist
 // Adds a single address to the watch list for TRC20 transfer monitoring
 // Supports all wallet types: NPS custodial, portal non-custodial, exchange, etc.
@@ -301,6 +322,76 @@ func (h *WatchListHandler) RemoveFromWatchList(c *fiber.Ctx) error {
 		"message": "Address removed from watch list",
 		"address": address,
 	})
+}
+
+// ResubscribeToWatchList handles POST /api/v1/watchlist/:address/resubscribe
+// Resubscribes a previously unsubscribed address and optionally scans for missed transactions
+func (h *WatchListHandler) ResubscribeToWatchList(c *fiber.Ctx) error {
+	address := c.Params("address")
+	if address == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Address is required",
+		})
+	}
+
+	var req ResubscribeRequest
+	if err := c.BodyParser(&req); err != nil {
+		// If no body, use defaults
+		req = ResubscribeRequest{
+			Address: address,
+			ScanGap: true, // Default to scanning for gap
+		}
+	}
+
+	// Override address from URL
+	req.Address = address
+
+	// Validate address format
+	if !isValidTronAddress(req.Address) {
+		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
+			Error:   "invalid_address",
+			Message: "Invalid Tron address format. Address should start with 'T' and be 34 characters",
+		})
+	}
+
+	// Create filters for TRC20 monitoring
+	filters := models.SubscriptionFilters{
+		ContractTypes: []string{"TriggerSmartContract"},
+		OnlySuccess:   true,
+	}
+
+	// Call resubscribe which handles gap detection and scanning
+	result, err := h.manager.Resubscribe(req.Address, req.WebhookURL, filters, req.ScanGap)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
+			Error:   "resubscribe_failed",
+			Message: err.Error(),
+		})
+	}
+
+	response := ResubscribeResponse{
+		SubscriptionID: result.Subscription.SubscriptionID,
+		Address:        result.Subscription.Address,
+		Status:         result.Subscription.Status,
+		GapDetected:    result.GapDetected,
+		GapStart:       result.GapStart,
+		GapEnd:         result.GapEnd,
+		GapBlocks:      result.GapEnd - result.GapStart,
+		GapScanning:    result.GapScanning,
+	}
+
+	if result.GapDetected {
+		if result.GapScanning {
+			response.Message = "Resubscribed successfully. Background scan started to recover missed transactions."
+		} else {
+			response.Message = "Resubscribed successfully. Gap detected but scan not requested."
+		}
+	} else {
+		response.Message = "New subscription created (no previous subscription found)."
+	}
+
+	return c.Status(fiber.StatusOK).JSON(response)
 }
 
 // GetWatchList handles GET /api/v1/watchlist

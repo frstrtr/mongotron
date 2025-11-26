@@ -165,6 +165,7 @@ func main() {
 	api.Get("/watchlist/:address", watchListHandler.GetWatchedAddress)
 	api.Delete("/watchlist/:address", watchListHandler.RemoveFromWatchList)
 	api.Post("/watchlist/:address/scan", watchListHandler.ScanHistorical)
+	api.Post("/watchlist/:address/resubscribe", watchListHandler.ResubscribeToWatchList)
 
 	// Event endpoints
 	api.Get("/events", eventHandler.ListEvents)

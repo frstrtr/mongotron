@@ -34,6 +34,14 @@ func (m *MockSubscriptionManager) Unsubscribe(subscriptionID string) error {
 	return args.Error(0)
 }
 
+func (m *MockSubscriptionManager) Resubscribe(address string, webhookURL string, filters models.SubscriptionFilters, scanGap bool) (*subscription.ResubscribeResult, error) {
+	args := m.Called(address, webhookURL, filters, scanGap)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*subscription.ResubscribeResult), args.Error(1)
+}
+
 func (m *MockSubscriptionManager) GetSubscription(subscriptionID string) (*models.Subscription, error) {
 	args := m.Called(subscriptionID)
 	if args.Get(0) == nil {
@@ -48,6 +56,27 @@ func (m *MockSubscriptionManager) ListSubscriptions(limit, skip int64) ([]*model
 		return nil, args.Get(1).(int64), args.Error(2)
 	}
 	return args.Get(0).([]*models.Subscription), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockSubscriptionManager) List(limit, skip int64) ([]*models.Subscription, int64, error) {
+	args := m.Called(limit, skip)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*models.Subscription), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockSubscriptionManager) GetByAddress(address string) (*models.Subscription, error) {
+	args := m.Called(address)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Subscription), args.Error(1)
+}
+
+func (m *MockSubscriptionManager) ScanHistorical(subscriptionID string, fromBlock, toBlock int64) error {
+	args := m.Called(subscriptionID, fromBlock, toBlock)
+	return args.Error(0)
 }
 
 func (m *MockSubscriptionManager) GetActiveMonitorsCount() int {

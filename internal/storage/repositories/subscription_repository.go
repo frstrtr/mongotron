@@ -176,6 +176,31 @@ func (r *SubscriptionRepository) UpdateStatus(ctx context.Context, id primitive.
 	return nil
 }
 
+// UpdateStatusWithBlock updates subscription status and records the last seen block
+// Used when stopping/pausing to preserve the block position for gap scanning on resubscribe
+func (r *SubscriptionRepository) UpdateStatusWithBlock(ctx context.Context, id primitive.ObjectID, status string, lastSeenBlock int64) error {
+	now := time.Now()
+	update := bson.M{
+		"$set": bson.M{
+			"status":          status,
+			"last_seen_block": lastSeenBlock,
+			"stopped_at":      now,
+			"updated_at":      now,
+		},
+	}
+
+	result, err := r.collection.UpdateOne(ctx, bson.M{"_id": id}, update)
+	if err != nil {
+		return fmt.Errorf("failed to update subscription status: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("subscription not found")
+	}
+
+	return nil
+}
+
 // IncrementEventsCount increments the events counter
 func (r *SubscriptionRepository) IncrementEventsCount(ctx context.Context, subscriptionID string) error {
 	now := time.Now()
