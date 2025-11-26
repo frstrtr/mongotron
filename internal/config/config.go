@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"time"
 
 	"github.com/spf13/viper"
@@ -72,10 +74,10 @@ type TronConfig struct {
 }
 
 type WorkerPoolConfig struct {
-	Workers                  int
-	QueueSize                int
-	JobTimeout               time.Duration
-	GracefulShutdownTimeout  time.Duration
+	Workers                 int
+	QueueSize               int
+	JobTimeout              time.Duration
+	GracefulShutdownTimeout time.Duration
 }
 
 type LoggingConfig struct {
@@ -98,6 +100,16 @@ type WebhooksConfig struct {
 		MaxConcurrent int
 		RetryAttempts int
 	}
+	Porto PortoConfig // Porto API webhook configuration
+}
+
+// PortoConfig holds configuration for Porto API integration
+type PortoConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	BaseURL       string `yaml:"baseUrl"`
+	WebhookPath   string `yaml:"webhookPath"` // Path for webhook endpoint (e.g., /v1/webhooks/mongotron/transfer)
+	WebhookSecret string `yaml:"webhookSecret"`
+	Network       string `yaml:"network"` // "tron-mainnet" or "tron-nile"
 }
 
 type APIConfig struct {
@@ -122,9 +134,9 @@ type SecurityConfig struct {
 		Issuer     string
 	}
 	RateLimiting struct {
-		Enabled            bool
-		RequestsPerMinute  int
-		Burst              int
+		Enabled           bool
+		RequestsPerMinute int
+		Burst             int
 	}
 }
 
@@ -157,7 +169,33 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("unable to decode config: %w", err)
 	}
 
+	// Expand environment variables in Porto config
+	cfg.Webhooks.Porto.BaseURL = expandEnvVar(cfg.Webhooks.Porto.BaseURL)
+	cfg.Webhooks.Porto.WebhookSecret = expandEnvVar(cfg.Webhooks.Porto.WebhookSecret)
+
 	return &cfg, nil
+}
+
+// expandEnvVar expands environment variables in a string
+// Supports ${VAR} and ${VAR:default} syntax
+func expandEnvVar(s string) string {
+	// Pattern matches ${VAR} or ${VAR:default}
+	re := regexp.MustCompile(`\$\{([^}:]+)(?::([^}]*))?\}`)
+	return re.ReplaceAllStringFunc(s, func(match string) string {
+		parts := re.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		envVar := parts[1]
+		defaultVal := ""
+		if len(parts) >= 3 {
+			defaultVal = parts[2]
+		}
+		if val := os.Getenv(envVar); val != "" {
+			return val
+		}
+		return defaultVal
+	})
 }
 
 func setDefaults(v *viper.Viper) {

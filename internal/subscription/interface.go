@@ -10,6 +10,8 @@ type ManagerInterface interface {
 	Subscribe(address string, webhookURL string, filters models.SubscriptionFilters, startBlock int64) (*models.Subscription, error)
 	Unsubscribe(subscriptionID string) error
 	GetSubscription(subscriptionID string) (*models.Subscription, error)
+	GetByAddress(address string) (*models.Subscription, error)
+	List(limit, skip int64) ([]*models.Subscription, int64, error)
 	ListSubscriptions(limit, skip int64) ([]*models.Subscription, int64, error)
 	GetActiveMonitorsCount() int
 	GetEventRouter() *EventRouter

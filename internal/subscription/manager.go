@@ -186,6 +186,29 @@ func (m *Manager) GetSubscription(subscriptionID string) (*models.Subscription, 
 	return m.db.SubscriptionRepo.FindBySubscriptionID(m.ctx, subscriptionID)
 }
 
+// GetByAddress retrieves a subscription by wallet address
+func (m *Manager) GetByAddress(address string) (*models.Subscription, error) {
+	subs, err := m.db.SubscriptionRepo.FindByAddress(m.ctx, address)
+	if err != nil {
+		return nil, err
+	}
+	if len(subs) == 0 {
+		return nil, fmt.Errorf("subscription not found for address: %s", address)
+	}
+	// Return the first active subscription for this address
+	for _, sub := range subs {
+		if sub.Status == "active" {
+			return sub, nil
+		}
+	}
+	return subs[0], nil
+}
+
+// List lists all subscriptions with pagination (alias for ListSubscriptions)
+func (m *Manager) List(limit, skip int64) ([]*models.Subscription, int64, error) {
+	return m.db.SubscriptionRepo.List(m.ctx, limit, skip)
+}
+
 // ListSubscriptions lists all subscriptions with pagination
 func (m *Manager) ListSubscriptions(limit, skip int64) ([]*models.Subscription, int64, error) {
 	return m.db.SubscriptionRepo.List(m.ctx, limit, skip)

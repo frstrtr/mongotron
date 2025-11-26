@@ -14,6 +14,7 @@ import (
 	"github.com/frstrtr/mongotron/internal/config"
 	"github.com/frstrtr/mongotron/internal/storage"
 	"github.com/frstrtr/mongotron/internal/subscription"
+	"github.com/frstrtr/mongotron/internal/webhook"
 	"github.com/frstrtr/mongotron/pkg/logger"
 	wsfiber "github.com/gofiber/contrib/websocket"
 	"github.com/gofiber/fiber/v2"
@@ -78,6 +79,24 @@ func main() {
 	}
 	defer manager.Stop()
 
+	// Configure Porto API client if enabled
+	if cfg.Webhooks.Porto.Enabled {
+		portoClient := webhook.NewPortoAPIClient(
+			cfg.Webhooks.Porto.BaseURL,
+			cfg.Webhooks.Porto.WebhookPath,
+			cfg.Webhooks.Porto.WebhookSecret,
+			cfg.Webhooks.Porto.Network,
+			&log,
+		)
+		manager.GetEventRouter().SetPortoClient(portoClient)
+		manager.GetEventRouter().SetNetwork(cfg.Webhooks.Porto.Network)
+		log.Info().
+			Str("portoUrl", cfg.Webhooks.Porto.BaseURL).
+			Str("webhookPath", cfg.Webhooks.Porto.WebhookPath).
+			Str("network", cfg.Webhooks.Porto.Network).
+			Msg("Porto API webhook integration enabled")
+	}
+
 	// Initialize WebSocket hub
 	hub := websocket.NewHub(manager.GetEventRouter(), &log)
 	go hub.Run()
@@ -123,6 +142,7 @@ func main() {
 	eventHandler := handlers.NewEventHandler(db.EventRepo)
 	healthHandler := handlers.NewHealthHandler(manager, version)
 	wsHandler := handlers.NewWebSocketHandler(hub, manager)
+	watchListHandler := handlers.NewWatchListHandler(manager)
 
 	// Routes
 	api := app.Group("/api/v1")
@@ -137,6 +157,14 @@ func main() {
 	api.Get("/subscriptions", subscriptionHandler.ListSubscriptions)
 	api.Get("/subscriptions/:id", subscriptionHandler.GetSubscription)
 	api.Delete("/subscriptions/:id", subscriptionHandler.DeleteSubscription)
+
+	// Watch list endpoints (for USDT/TRC20 wallet monitoring - all wallet types)
+	api.Post("/watchlist", watchListHandler.AddToWatchList)
+	api.Post("/watchlist/bulk", watchListHandler.BulkAddToWatchList)
+	api.Get("/watchlist", watchListHandler.GetWatchList)
+	api.Get("/watchlist/:address", watchListHandler.GetWatchedAddress)
+	api.Delete("/watchlist/:address", watchListHandler.RemoveFromWatchList)
+	api.Post("/watchlist/:address/scan", watchListHandler.ScanHistorical)
 
 	// Event endpoints
 	api.Get("/events", eventHandler.ListEvents)
@@ -156,6 +184,7 @@ func main() {
 			"endpoints": fiber.Map{
 				"health":        "/api/v1/health",
 				"subscriptions": "/api/v1/subscriptions",
+				"watchlist":     "/api/v1/watchlist",
 				"events":        "/api/v1/events",
 				"websocket":     "/api/v1/events/stream/:subscriptionId",
 			},

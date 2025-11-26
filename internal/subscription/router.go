@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/frstrtr/mongotron/internal/blockchain/monitor"
+	"github.com/frstrtr/mongotron/internal/blockchain/parser"
 	"github.com/frstrtr/mongotron/internal/storage"
 	"github.com/frstrtr/mongotron/internal/storage/models"
+	"github.com/frstrtr/mongotron/internal/webhook"
 	"github.com/frstrtr/mongotron/pkg/logger"
 )
 
@@ -22,6 +24,9 @@ type EventRouter struct {
 	wsClients     map[string][]*WebSocketClient // key: subscription_id
 	eventQueue    chan *RouteEventRequest
 	webhookClient *http.Client
+	portoClient   *webhook.PortoAPIClient
+	trc20Parser   *parser.TRC20Parser
+	network       string // "tron-mainnet" or "tron-nile"
 	mu            sync.RWMutex
 }
 
@@ -42,14 +47,26 @@ type WebSocketClient struct {
 // NewEventRouter creates a new event router
 func NewEventRouter(db *storage.Database, log *logger.Logger) *EventRouter {
 	return &EventRouter{
-		db:         db,
-		logger:     log,
-		wsClients:  make(map[string][]*WebSocketClient),
-		eventQueue: make(chan *RouteEventRequest, 1000),
+		db:          db,
+		logger:      log,
+		wsClients:   make(map[string][]*WebSocketClient),
+		eventQueue:  make(chan *RouteEventRequest, 1000),
+		trc20Parser: parser.NewTRC20Parser(),
+		network:     "tron-nile", // Default to testnet
 		webhookClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
+}
+
+// SetPortoClient sets the Porto API client for webhook notifications
+func (r *EventRouter) SetPortoClient(client *webhook.PortoAPIClient) {
+	r.portoClient = client
+}
+
+// SetNetwork sets the network name (tron-mainnet or tron-nile)
+func (r *EventRouter) SetNetwork(network string) {
+	r.network = network
 }
 
 // Run starts the event router
@@ -103,8 +120,113 @@ func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 		go r.sendToWebhook(req.Subscription, eventData)
 	}
 
+	// Check for TRC20 transfers and send to Porto API
+	if r.portoClient != nil && req.Event.ContractType == "TriggerSmartContract" {
+		go r.handleTRC20Transfer(req)
+	}
+
 	// Store in database (events collection)
 	go r.storeEvent(req)
+}
+
+// handleTRC20Transfer checks if the event is a TRC20 transfer and sends to Porto API
+func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
+	// Get smart contract data from EventData
+	scData, ok := req.Event.EventData["smartContract"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	// Check if this is a transfer method
+	methodSig, _ := scData["methodSignature"].(string)
+	if methodSig != "a9059cbb" && methodSig != "23b872dd" {
+		return // Not a transfer
+	}
+
+	// Parse the transfer details
+	transfer := &parser.TRC20Transfer{
+		ContractAddress: req.Event.To, // Contract being called
+		TxHash:          req.Event.TransactionID,
+		BlockNumber:     req.Event.BlockNumber,
+		BlockTimestamp:  req.Event.BlockTimestamp,
+		Success:         req.Event.Success,
+	}
+
+	// Get token info
+	transfer.TokenSymbol, transfer.TokenDecimals = r.getTokenInfo(req.Event.To)
+
+	// Extract parameters
+	if params, ok := scData["parameters"].(map[string]interface{}); ok {
+		if to, ok := params["to"].(string); ok {
+			transfer.ToHex = to
+			transfer.To = parser.HexToBase58(to)
+		}
+		if from, ok := params["from"].(string); ok {
+			transfer.FromHex = from
+			transfer.From = parser.HexToBase58(from)
+		}
+		if amountStr, ok := params["amount"].(string); ok {
+			transfer.AmountDecimal = r.formatAmount(amountStr, transfer.TokenDecimals)
+		}
+	}
+
+	// For transfer() method, From is the transaction sender
+	if methodSig == "a9059cbb" {
+		transfer.From = parser.HexToBase58(req.Event.From)
+		transfer.FromHex = req.Event.From
+		transfer.MethodType = "transfer"
+	} else {
+		transfer.MethodType = "transferFrom"
+	}
+
+	// Create Porto event
+	portoEvent := webhook.CreateTransferEvent(
+		transfer,
+		req.Subscription.Address, // The watched NPS wallet
+		req.Subscription.SubscriptionID,
+		r.network,
+	)
+
+	// Send to Porto API
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendTransferNotification(ctx, portoEvent); err != nil {
+		r.logger.Error().
+			Err(err).
+			Str("txHash", transfer.TxHash).
+			Str("to", transfer.To).
+			Msg("Failed to send transfer notification to Porto API")
+	} else {
+		r.logger.Info().
+			Str("txHash", transfer.TxHash).
+			Str("token", transfer.TokenSymbol).
+			Str("to", transfer.To).
+			Str("amount", transfer.AmountDecimal).
+			Msg("TRC20 transfer detected and sent to Porto API")
+	}
+}
+
+// getTokenInfo returns token symbol and decimals for known contracts
+func (r *EventRouter) getTokenInfo(contractAddress string) (string, int) {
+	if r.trc20Parser.IsUSDTContract(contractAddress) {
+		return "USDT", 6
+	}
+	return "TRC20", 18 // Default
+}
+
+// formatAmount formats raw amount string with decimals
+func (r *EventRouter) formatAmount(amountStr string, decimals int) string {
+	// Simple formatting - for production use big.Int
+	if amountStr == "" {
+		return "0"
+	}
+	// Add decimal point
+	if len(amountStr) <= decimals {
+		return "0." + fmt.Sprintf("%0*s", decimals, amountStr)
+	}
+	pos := len(amountStr) - decimals
+	return amountStr[:pos] + "." + amountStr[pos:]
 }
 
 // sendToWebSocketClients sends event to all WebSocket clients subscribed to this subscription
