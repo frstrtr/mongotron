@@ -15,6 +15,7 @@ type ManagerInterface interface {
 	ListSubscriptions(limit, skip int64) ([]*models.Subscription, int64, error)
 	GetActiveMonitorsCount() int
 	GetEventRouter() *EventRouter
+	ScanHistorical(subscriptionID string, fromBlock, toBlock int64) error
 }
 
 // Ensure Manager implements ManagerInterface

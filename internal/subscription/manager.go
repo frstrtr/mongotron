@@ -429,3 +429,63 @@ func (m *Manager) matchesFilters(event *monitor.AddressEvent, filters models.Sub
 
 	return true
 }
+
+// ScanHistorical triggers a historical block scan for a subscription
+// This scans blocks from fromBlock to toBlock and routes any events found
+// through the normal event processing pipeline (including Porto webhooks)
+func (m *Manager) ScanHistorical(subscriptionID string, fromBlock, toBlock int64) error {
+	m.mu.RLock()
+	wrapper, exists := m.monitors[subscriptionID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("subscription not found or not active: %s", subscriptionID)
+	}
+
+	// Get the address monitor (we need the concrete type for ScanHistorical)
+	addrMonitor, ok := wrapper.Monitor.(*monitor.AddressMonitor)
+	if !ok {
+		return fmt.Errorf("historical scan only supported for address monitors")
+	}
+
+	m.logger.Info().
+		Str("subscriptionId", subscriptionID).
+		Str("address", wrapper.Subscription.Address).
+		Int64("fromBlock", fromBlock).
+		Int64("toBlock", toBlock).
+		Msg("Starting historical scan for subscription")
+
+	// Create a callback that routes events through the normal pipeline
+	callback := func(event *monitor.AddressEvent) {
+		// Apply filters
+		if !m.matchesFilters(event, wrapper.Subscription.Filters) {
+			return
+		}
+
+		// Route event through the event router (this triggers TRC20 detection and Porto webhooks)
+		if err := m.eventRouter.RouteEvent(wrapper.Subscription, event); err != nil {
+			m.logger.Error().
+				Err(err).
+				Str("subscriptionId", subscriptionID).
+				Str("txHash", event.TransactionID).
+				Msg("Failed to route historical event")
+			return
+		}
+
+		// Update subscription stats
+		m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, subscriptionID)
+
+		m.logger.Debug().
+			Str("subscriptionId", subscriptionID).
+			Str("txHash", event.TransactionID).
+			Int64("block", event.BlockNumber).
+			Msg("Historical event routed")
+	}
+
+	// Run the scan (this is synchronous but can be made async if needed)
+	if err := addrMonitor.ScanHistorical(fromBlock, toBlock, callback); err != nil {
+		return fmt.Errorf("historical scan failed: %w", err)
+	}
+
+	return nil
+}

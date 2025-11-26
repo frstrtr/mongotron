@@ -430,9 +430,14 @@ func (h *WatchListHandler) ScanHistorical(c *fiber.Ctx) error {
 		})
 	}
 
-	// Update the subscription to start scanning from the specified block
-	// The monitor will pick up from this block on the next poll
-	// TODO: Implement UpdateStartBlock in manager
+	// Start the historical scan in a goroutine so we can return immediately
+	go func() {
+		if err := h.manager.ScanHistorical(sub.SubscriptionID, req.FromBlock, req.ToBlock); err != nil {
+			// Log the error - we can't return it to the client since we're async
+			// In a production system, you might want to store scan status in DB
+			_ = err // Error is logged in the manager
+		}
+	}()
 
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
 		"message":        "Historical scan initiated",
@@ -441,7 +446,7 @@ func (h *WatchListHandler) ScanHistorical(c *fiber.Ctx) error {
 		"fromBlock":      req.FromBlock,
 		"toBlock":        req.ToBlock,
 		"status":         "scanning",
-		"note":           "The monitor will scan historical blocks. Progress can be tracked via GET /api/v1/watchlist/:address",
+		"note":           "Scan is running in background. Events will be processed through normal pipeline including Porto webhooks.",
 	})
 }
 

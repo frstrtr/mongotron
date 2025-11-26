@@ -400,3 +400,128 @@ func (m *AddressMonitor) addressToHex(address string) string {
 	// Convert to hex string
 	return hex.EncodeToString(decoded)
 }
+
+// ScanHistorical scans a range of historical blocks for the watched address
+// This is used to catch up on past transactions when a new wallet is added
+// The callback function is called for each event found
+func (m *AddressMonitor) ScanHistorical(fromBlock, toBlock int64, callback func(*AddressEvent)) error {
+	m.logger.Info().
+		Int64("fromBlock", fromBlock).
+		Int64("toBlock", toBlock).
+		Str("address", m.watchAddress).
+		Msg("Starting historical block scan")
+
+	// If toBlock is 0 or negative, get current block
+	if toBlock <= 0 {
+		currentBlock, err := m.client.GetNowBlock(m.ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get current block: %w", err)
+		}
+		toBlock = currentBlock.GetBlockHeader().GetRawData().GetNumber()
+	}
+
+	if fromBlock > toBlock {
+		return fmt.Errorf("fromBlock (%d) cannot be greater than toBlock (%d)", fromBlock, toBlock)
+	}
+
+	totalBlocks := toBlock - fromBlock + 1
+	processedBlocks := int64(0)
+	eventsFound := int64(0)
+
+	m.logger.Info().
+		Int64("totalBlocks", totalBlocks).
+		Msg("Historical scan: processing blocks")
+
+	for blockNum := fromBlock; blockNum <= toBlock; blockNum++ {
+		// Check if context is cancelled
+		select {
+		case <-m.ctx.Done():
+			m.logger.Warn().
+				Int64("processedBlocks", processedBlocks).
+				Int64("eventsFound", eventsFound).
+				Msg("Historical scan cancelled")
+			return m.ctx.Err()
+		default:
+		}
+
+		// Get block with timeout
+		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+		block, err := m.client.GetBlockByNum(ctx, blockNum)
+		cancel()
+
+		if err != nil {
+			m.logger.Warn().
+				Err(err).
+				Int64("block", blockNum).
+				Msg("Failed to get block during historical scan, continuing...")
+			continue
+		}
+
+		if block == nil || block.GetBlockHeader() == nil {
+			continue
+		}
+
+		blockHeader := block.GetBlockHeader().GetRawData()
+		blockHash := hex.EncodeToString(block.GetBlockHeader().GetWitnessSignature())
+		transactions := block.GetTransactions()
+
+		// Check each transaction in the block
+		for _, tx := range transactions {
+			if m.isAddressInTransaction(tx) {
+				event, err := m.extractEvent(block, tx)
+				if err != nil {
+					txID := m.parser.CalculateTransactionID(tx)
+					m.logger.Warn().
+						Err(err).
+						Str("txID", txID).
+						Int64("block", blockNum).
+						Msg("Error extracting event during historical scan")
+					continue
+				}
+
+				if event != nil {
+					event.BlockNumber = blockNum
+					event.BlockHash = blockHash
+					event.BlockTimestamp = blockHeader.GetTimestamp()
+
+					// Call the callback with the event
+					if callback != nil {
+						callback(event)
+					}
+
+					eventsFound++
+
+					m.logger.Info().
+						Int64("block", blockNum).
+						Str("txHash", event.TransactionHash).
+						Str("type", event.ContractType).
+						Msg("Historical event found")
+				}
+			}
+		}
+
+		processedBlocks++
+
+		// Log progress every 100 blocks
+		if processedBlocks%100 == 0 {
+			progress := float64(processedBlocks) / float64(totalBlocks) * 100
+			m.logger.Info().
+				Int64("processedBlocks", processedBlocks).
+				Int64("totalBlocks", totalBlocks).
+				Float64("progress", progress).
+				Int64("eventsFound", eventsFound).
+				Msg("Historical scan progress")
+		}
+
+		// Small delay to avoid hammering the node (10ms between blocks)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	m.logger.Info().
+		Int64("processedBlocks", processedBlocks).
+		Int64("eventsFound", eventsFound).
+		Str("address", m.watchAddress).
+		Msg("Historical block scan completed")
+
+	return nil
+}
