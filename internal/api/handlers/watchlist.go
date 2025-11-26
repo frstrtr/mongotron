@@ -16,6 +16,8 @@ const (
 	WalletTypePortal WalletType = "portal"
 	// WalletTypeExchange represents exchange wallets
 	WalletTypeExchange WalletType = "exchange"
+	// WalletTypePlatform represents platform deposit wallets (user-specific)
+	WalletTypePlatform WalletType = "platform"
 	// WalletTypeGeneral represents general/unspecified wallets
 	WalletTypeGeneral WalletType = "general"
 )
@@ -36,12 +38,14 @@ func NewWatchListHandler(manager subscription.ManagerInterface) *WatchListHandle
 // WatchAddressRequest represents a request to add an address to watch list
 type WatchAddressRequest struct {
 	Address     string                 `json:"address" validate:"required"`
-	WalletType  WalletType             `json:"walletType,omitempty"`  // "nps", "portal", "exchange", "general"
+	WalletType  WalletType             `json:"walletType,omitempty"`  // "platform", "nps", "portal", "exchange", "general"
+	UserID      string                 `json:"userId,omitempty"`      // User identifier (telegram_id, etc.)
 	Label       string                 `json:"label,omitempty"`       // Optional label (e.g., "User Wallet #123")
 	WebhookURL  string                 `json:"webhookUrl,omitempty"`  // Webhook for this specific address
 	TokenFilter []string               `json:"tokenFilter,omitempty"` // e.g., ["USDT", "USDC"]
+	AssetTypes  []string               `json:"assetTypes,omitempty"`  // e.g., ["TRX", "TRC10", "TRC20"] - empty means all
 	StartBlock  int64                  `json:"startBlock,omitempty"`  // Start monitoring from specific block (0 = current)
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`    // Extra data (e.g., user_id, account_id, portal_user_id)
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`    // Extra data (e.g., account_id, portal_user_id)
 }
 
 // BulkWatchRequest represents a bulk add request
@@ -130,13 +134,18 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 	if !isValidWalletType(req.WalletType) {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
 			Error:   "invalid_wallet_type",
-			Message: "Invalid wallet type. Must be one of: nps, portal, exchange, general",
+			Message: "Invalid wallet type. Must be one of: platform, nps, portal, exchange, general",
 		})
 	}
 
-	// Create filters for TRC20 monitoring (TriggerSmartContract type)
+	// Build contract types based on asset filter
+	contractTypes := buildContractTypes(req.AssetTypes)
+
+	// Create filters
 	filters := models.SubscriptionFilters{
-		ContractTypes: []string{"TriggerSmartContract"},
+		ContractTypes: contractTypes,
+		AssetTypes:    req.AssetTypes,
+		TokenFilter:   req.TokenFilter,
 		OnlySuccess:   true,
 	}
 
@@ -146,8 +155,17 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 		startBlock = -1 // Will use latest block
 	}
 
-	// Create subscription
-	sub, err := h.manager.Subscribe(req.Address, req.WebhookURL, filters, startBlock)
+	// Create subscription with full options
+	sub, err := h.manager.SubscribeWithOptions(subscription.SubscribeOptions{
+		Address:    req.Address,
+		WebhookURL: req.WebhookURL,
+		Filters:    filters,
+		StartBlock: startBlock,
+		WalletType: string(req.WalletType),
+		UserID:     req.UserID,
+		Label:      req.Label,
+		Metadata:   req.Metadata,
+	})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
 			Error:   "subscription_failed",
@@ -155,34 +173,74 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 		})
 	}
 
-	// Add wallet type to metadata
-	if req.Metadata == nil {
-		req.Metadata = make(map[string]interface{})
-	}
-	req.Metadata["walletType"] = string(req.WalletType)
-
 	response := WatchListResponse{
 		SubscriptionID: sub.SubscriptionID,
 		Address:        sub.Address,
-		WalletType:     req.WalletType,
-		Label:          req.Label,
+		WalletType:     WalletType(sub.WalletType),
+		Label:          sub.Label,
 		WebhookURL:     sub.WebhookURL,
 		TokenFilter:    req.TokenFilter,
 		Status:         sub.Status,
 		EventsCount:    sub.EventsCount,
 		StartBlock:     sub.StartBlock,
 		CurrentBlock:   sub.CurrentBlock,
-		Metadata:       req.Metadata,
+		Metadata:       sub.Metadata,
 		CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(response)
 }
 
+// buildContractTypes returns the contract types to monitor based on asset types
+func buildContractTypes(assetTypes []string) []string {
+	if len(assetTypes) == 0 {
+		// Default: monitor all transfer types
+		return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
+	}
+
+	contractTypes := make([]string, 0, 3)
+	for _, asset := range assetTypes {
+		switch asset {
+		case "TRX":
+			if !contains(contractTypes, "TransferContract") {
+				contractTypes = append(contractTypes, "TransferContract")
+			}
+		case "TRC10":
+			if !contains(contractTypes, "TransferAssetContract") {
+				contractTypes = append(contractTypes, "TransferAssetContract")
+			}
+		case "TRC20":
+			if !contains(contractTypes, "TriggerSmartContract") {
+				contractTypes = append(contractTypes, "TriggerSmartContract")
+			}
+		case "*":
+			// All types
+			return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
+		}
+	}
+
+	if len(contractTypes) == 0 {
+		// Fallback to all types
+		return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
+	}
+
+	return contractTypes
+}
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 // isValidWalletType checks if the wallet type is valid
 func isValidWalletType(wt WalletType) bool {
 	switch wt {
-	case WalletTypeNPS, WalletTypePortal, WalletTypeExchange, WalletTypeGeneral:
+	case WalletTypeNPS, WalletTypePortal, WalletTypeExchange, WalletTypePlatform, WalletTypeGeneral:
 		return true
 	}
 	return false
@@ -206,10 +264,10 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 		})
 	}
 
-	if len(req.Addresses) > 100 {
+	if len(req.Addresses) > 1000 {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
 			Error:   "invalid_request",
-			Message: "Maximum 100 addresses per request",
+			Message: "Maximum 1000 addresses per request",
 		})
 	}
 
@@ -247,13 +305,28 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 			startBlock = -1
 		}
 
-		// Create subscription
+		// Build contract types based on asset filter
+		contractTypes := buildContractTypes(addr.AssetTypes)
+
+		// Create filters
 		filters := models.SubscriptionFilters{
-			ContractTypes: []string{"TriggerSmartContract"},
+			ContractTypes: contractTypes,
+			AssetTypes:    addr.AssetTypes,
+			TokenFilter:   addr.TokenFilter,
 			OnlySuccess:   true,
 		}
 
-		sub, err := h.manager.Subscribe(addr.Address, webhookURL, filters, startBlock)
+		// Create subscription with full options
+		sub, err := h.manager.SubscribeWithOptions(subscription.SubscribeOptions{
+			Address:    addr.Address,
+			WebhookURL: webhookURL,
+			Filters:    filters,
+			StartBlock: startBlock,
+			WalletType: string(walletType),
+			UserID:     addr.UserID,
+			Label:      addr.Label,
+			Metadata:   addr.Metadata,
+		})
 		if err != nil {
 			response.Failed = append(response.Failed, BulkFailure{
 				Address: addr.Address,
@@ -262,25 +335,18 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 			continue
 		}
 
-		// Add wallet type to metadata
-		metadata := addr.Metadata
-		if metadata == nil {
-			metadata = make(map[string]interface{})
-		}
-		metadata["walletType"] = string(walletType)
-
 		response.Success = append(response.Success, WatchListResponse{
 			SubscriptionID: sub.SubscriptionID,
 			Address:        sub.Address,
-			WalletType:     walletType,
-			Label:          addr.Label,
+			WalletType:     WalletType(sub.WalletType),
+			Label:          sub.Label,
 			WebhookURL:     sub.WebhookURL,
 			TokenFilter:    addr.TokenFilter,
 			Status:         sub.Status,
 			EventsCount:    sub.EventsCount,
 			StartBlock:     sub.StartBlock,
 			CurrentBlock:   sub.CurrentBlock,
-			Metadata:       metadata,
+			Metadata:       sub.Metadata,
 			CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}

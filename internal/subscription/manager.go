@@ -114,20 +114,34 @@ func (m *Manager) Stop() error {
 
 // Subscribe creates a new subscription and starts monitoring
 func (m *Manager) Subscribe(address string, webhookURL string, filters models.SubscriptionFilters, startBlock int64) (*models.Subscription, error) {
+	return m.SubscribeWithOptions(SubscribeOptions{
+		Address:    address,
+		WebhookURL: webhookURL,
+		Filters:    filters,
+		StartBlock: startBlock,
+	})
+}
+
+// SubscribeWithOptions creates a new subscription with full options including metadata
+func (m *Manager) SubscribeWithOptions(opts SubscribeOptions) (*models.Subscription, error) {
 	// Generate subscription ID
 	subscriptionID := fmt.Sprintf("sub_%s", uuid.New().String()[:12])
 
 	// Create subscription model
 	sub := &models.Subscription{
 		SubscriptionID: subscriptionID,
-		Address:        address,
+		Address:        opts.Address,
 		Network:        "tron-nile", // TODO: Make configurable
-		WebhookURL:     webhookURL,
-		Filters:        filters,
+		WebhookURL:     opts.WebhookURL,
+		Filters:        opts.Filters,
 		Status:         "active",
 		EventsCount:    0,
-		StartBlock:     startBlock,
-		CurrentBlock:   startBlock,
+		StartBlock:     opts.StartBlock,
+		CurrentBlock:   opts.StartBlock,
+		WalletType:     opts.WalletType,
+		UserID:         opts.UserID,
+		Label:          opts.Label,
+		Metadata:       opts.Metadata,
 	}
 
 	// Save to database
@@ -144,10 +158,45 @@ func (m *Manager) Subscribe(address string, webhookURL string, filters models.Su
 
 	m.logger.Info().
 		Str("subscriptionId", sub.SubscriptionID).
-		Str("address", address).
+		Str("address", opts.Address).
+		Str("walletType", opts.WalletType).
+		Str("userId", opts.UserID).
 		Msg("Subscription created")
 
 	return sub, nil
+}
+
+// BatchSubscribe creates multiple subscriptions in a single operation
+// This is optimized for bulk registration of platform deposit addresses
+func (m *Manager) BatchSubscribe(opts []SubscribeOptions) (*BatchSubscribeResult, error) {
+	result := &BatchSubscribeResult{
+		Success: make([]*models.Subscription, 0, len(opts)),
+		Failed:  make([]BatchSubscribeFailure, 0),
+	}
+
+	for _, opt := range opts {
+		sub, err := m.SubscribeWithOptions(opt)
+		if err != nil {
+			result.Failed = append(result.Failed, BatchSubscribeFailure{
+				Address: opt.Address,
+				Error:   err.Error(),
+			})
+			m.logger.Warn().
+				Err(err).
+				Str("address", opt.Address).
+				Msg("Failed to subscribe address in batch")
+			continue
+		}
+		result.Success = append(result.Success, sub)
+	}
+
+	m.logger.Info().
+		Int("total", len(opts)).
+		Int("success", len(result.Success)).
+		Int("failed", len(result.Failed)).
+		Msg("Batch subscription completed")
+
+	return result, nil
 }
 
 // Unsubscribe stops monitoring and marks subscription as stopped

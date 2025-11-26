@@ -120,9 +120,19 @@ func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 		go r.sendToWebhook(req.Subscription, eventData)
 	}
 
-	// Check for TRC20 transfers and send to Porto API
-	if r.portoClient != nil && req.Event.ContractType == "TriggerSmartContract" {
-		go r.handleTRC20Transfer(req)
+	// Route to Porto API based on contract type
+	if r.portoClient != nil {
+		switch req.Event.ContractType {
+		case "TransferContract":
+			// Native TRX transfer
+			go r.handleTRXTransfer(req)
+		case "TransferAssetContract":
+			// TRC10 token transfer
+			go r.handleTRC10Transfer(req)
+		case "TriggerSmartContract":
+			// TRC20 token transfer (smart contract call)
+			go r.handleTRC20Transfer(req)
+		}
 	}
 
 	// Store in database (events collection)
@@ -266,6 +276,12 @@ func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
 		portoEvent.Direction = "outgoing"
 	}
 
+	// Add subscription metadata to event
+	portoEvent.WalletType = req.Subscription.WalletType
+	portoEvent.UserID = req.Subscription.UserID
+	portoEvent.Label = req.Subscription.Label
+	portoEvent.Metadata = req.Subscription.Metadata
+
 	r.logger.Info().
 		Str("txHash", transfer.TxHash).
 		Str("token", transfer.TokenSymbol).
@@ -293,6 +309,211 @@ func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
 			Str("direction", portoEvent.Direction).
 			Msg("TRC20 transfer notification sent to Porto API successfully")
 	}
+}
+
+// handleTRXTransfer handles native TRX transfer events
+func (r *EventRouter) handleTRXTransfer(req *RouteEventRequest) {
+	// Extract addresses
+	from := req.Event.From
+	to := req.Event.To
+	amount := req.Event.Amount
+
+	// Convert hex addresses to base58 if needed
+	if len(from) == 42 && from[:2] == "41" {
+		from = parser.HexToBase58(from)
+	}
+	if len(to) == 42 && to[:2] == "41" {
+		to = parser.HexToBase58(to)
+	}
+
+	// Check if this transfer involves our watched address
+	watchedAddr := req.Subscription.Address
+	isIncoming := to == watchedAddr
+	isOutgoing := from == watchedAddr
+
+	if !isIncoming && !isOutgoing {
+		r.logger.Debug().
+			Str("txHash", req.Event.TransactionID).
+			Str("from", from).
+			Str("to", to).
+			Str("watchedAddress", watchedAddr).
+			Msg("TRX transfer does not involve watched address")
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("from", from).
+		Str("to", to).
+		Int64("amount", amount).
+		Str("watchedAddress", watchedAddr).
+		Msg("TRX transfer detected, processing...")
+
+	// Create Porto event
+	portoEvent := webhook.CreateTRXTransferEvent(
+		req.Event.TransactionID,
+		req.Event.BlockNumber,
+		req.Event.BlockTimestamp,
+		req.Event.Success,
+		from,
+		to,
+		amount,
+		watchedAddr,
+		req.Subscription.SubscriptionID,
+		r.network,
+	)
+
+	// Add subscription metadata to event
+	portoEvent.WalletType = req.Subscription.WalletType
+	portoEvent.UserID = req.Subscription.UserID
+	portoEvent.Label = req.Subscription.Label
+	portoEvent.Metadata = req.Subscription.Metadata
+
+	r.logger.Info().
+		Str("txHash", portoEvent.TxHash).
+		Str("from", from).
+		Str("to", to).
+		Str("amount", portoEvent.AmountDecimal).
+		Str("direction", portoEvent.Direction).
+		Msg("Sending TRX transfer notification to Porto API")
+
+	// Send to Porto API
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendTransferNotification(ctx, portoEvent); err != nil {
+		r.logger.Error().
+			Err(err).
+			Str("txHash", portoEvent.TxHash).
+			Str("to", to).
+			Msg("Failed to send TRX transfer notification to Porto API")
+	} else {
+		r.logger.Info().
+			Str("txHash", portoEvent.TxHash).
+			Str("to", to).
+			Str("amount", portoEvent.AmountDecimal).
+			Str("direction", portoEvent.Direction).
+			Msg("TRX transfer notification sent to Porto API successfully")
+	}
+}
+
+// handleTRC10Transfer handles TRC10 token transfer events
+func (r *EventRouter) handleTRC10Transfer(req *RouteEventRequest) {
+	// Extract addresses and asset info
+	from := req.Event.From
+	to := req.Event.To
+	amount := req.Event.Amount
+	assetName := req.Event.AssetName // TRC10 asset ID/name
+
+	// Convert hex addresses to base58 if needed
+	if len(from) == 42 && from[:2] == "41" {
+		from = parser.HexToBase58(from)
+	}
+	if len(to) == 42 && to[:2] == "41" {
+		to = parser.HexToBase58(to)
+	}
+
+	// Check if this transfer involves our watched address
+	watchedAddr := req.Subscription.Address
+	isIncoming := to == watchedAddr
+	isOutgoing := from == watchedAddr
+
+	if !isIncoming && !isOutgoing {
+		r.logger.Debug().
+			Str("txHash", req.Event.TransactionID).
+			Str("from", from).
+			Str("to", to).
+			Str("watchedAddress", watchedAddr).
+			Msg("TRC10 transfer does not involve watched address")
+		return
+	}
+
+	// Get TRC10 token info
+	assetSymbol, decimals := r.getTRC10TokenInfo(assetName)
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("from", from).
+		Str("to", to).
+		Int64("amount", amount).
+		Str("assetId", assetName).
+		Str("assetSymbol", assetSymbol).
+		Str("watchedAddress", watchedAddr).
+		Msg("TRC10 transfer detected, processing...")
+
+	// Create Porto event
+	portoEvent := webhook.CreateTRC10TransferEvent(
+		req.Event.TransactionID,
+		req.Event.BlockNumber,
+		req.Event.BlockTimestamp,
+		req.Event.Success,
+		from,
+		to,
+		amount,
+		assetName,
+		assetSymbol,
+		decimals,
+		watchedAddr,
+		req.Subscription.SubscriptionID,
+		r.network,
+	)
+
+	// Add subscription metadata to event
+	portoEvent.WalletType = req.Subscription.WalletType
+	portoEvent.UserID = req.Subscription.UserID
+	portoEvent.Label = req.Subscription.Label
+	portoEvent.Metadata = req.Subscription.Metadata
+
+	r.logger.Info().
+		Str("txHash", portoEvent.TxHash).
+		Str("from", from).
+		Str("to", to).
+		Str("amount", portoEvent.AmountDecimal).
+		Str("assetSymbol", assetSymbol).
+		Str("direction", portoEvent.Direction).
+		Msg("Sending TRC10 transfer notification to Porto API")
+
+	// Send to Porto API
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendTransferNotification(ctx, portoEvent); err != nil {
+		r.logger.Error().
+			Err(err).
+			Str("txHash", portoEvent.TxHash).
+			Str("to", to).
+			Msg("Failed to send TRC10 transfer notification to Porto API")
+	} else {
+		r.logger.Info().
+			Str("txHash", portoEvent.TxHash).
+			Str("to", to).
+			Str("amount", portoEvent.AmountDecimal).
+			Str("assetSymbol", assetSymbol).
+			Str("direction", portoEvent.Direction).
+			Msg("TRC10 transfer notification sent to Porto API successfully")
+	}
+}
+
+// getTRC10TokenInfo returns token symbol and decimals for known TRC10 tokens
+func (r *EventRouter) getTRC10TokenInfo(assetID string) (string, int) {
+	// Known TRC10 tokens on mainnet
+	// BTT (BitTorrent) - ID: 1002000
+	// WIN (WINk) - ID: 1002534
+	// Common TRC10s vary - return the ID as symbol if unknown
+	knownTokens := map[string]struct {
+		Symbol   string
+		Decimals int
+	}{
+		"1002000": {"BTT", 6},
+		"1002534": {"WIN", 6},
+		"_":       {"TRX", 6}, // TRX bandwidth (rare)
+	}
+
+	if info, ok := knownTokens[assetID]; ok {
+		return info.Symbol, info.Decimals
+	}
+	// Unknown token - return asset ID as symbol with default decimals
+	return assetID, 0
 }
 
 // getTokenInfo returns token symbol and decimals for known contracts

@@ -29,6 +29,22 @@ func (m *MockSubscriptionManager) Subscribe(address string, webhookURL string, f
 	return args.Get(0).(*models.Subscription), args.Error(1)
 }
 
+func (m *MockSubscriptionManager) SubscribeWithOptions(opts subscription.SubscribeOptions) (*models.Subscription, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Subscription), args.Error(1)
+}
+
+func (m *MockSubscriptionManager) BatchSubscribe(opts []subscription.SubscribeOptions) (*subscription.BatchSubscribeResult, error) {
+	args := m.Called(opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*subscription.BatchSubscribeResult), args.Error(1)
+}
+
 func (m *MockSubscriptionManager) Unsubscribe(subscriptionID string) error {
 	args := m.Called(subscriptionID)
 	return args.Error(0)

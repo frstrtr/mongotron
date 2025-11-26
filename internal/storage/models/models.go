@@ -8,85 +8,91 @@ import (
 
 // Address represents a monitored blockchain address
 type Address struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Address        string             `bson:"address" json:"address"`
-	Network        string             `bson:"network" json:"network"` // "tron", "tron-nile", etc.
-	Balance        int64              `bson:"balance" json:"balance"`
-	Type           string             `bson:"type" json:"type"` // "account", "contract"
-	FirstSeen      time.Time          `bson:"first_seen" json:"firstSeen"`
-	LastActivity   time.Time          `bson:"last_activity" json:"lastActivity"`
-	TxCount        int64              `bson:"tx_count" json:"txCount"`
-	SubscriptionID string             `bson:"subscription_id,omitempty" json:"subscriptionId,omitempty"`
+	ID             primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
+	Address        string                 `bson:"address" json:"address"`
+	Network        string                 `bson:"network" json:"network"` // "tron", "tron-nile", etc.
+	Balance        int64                  `bson:"balance" json:"balance"`
+	Type           string                 `bson:"type" json:"type"` // "account", "contract"
+	FirstSeen      time.Time              `bson:"first_seen" json:"firstSeen"`
+	LastActivity   time.Time              `bson:"last_activity" json:"lastActivity"`
+	TxCount        int64                  `bson:"tx_count" json:"txCount"`
+	SubscriptionID string                 `bson:"subscription_id,omitempty" json:"subscriptionId,omitempty"`
 	Metadata       map[string]interface{} `bson:"metadata,omitempty" json:"metadata,omitempty"`
-	CreatedAt      time.Time          `bson:"created_at" json:"createdAt"`
-	UpdatedAt      time.Time          `bson:"updated_at" json:"updatedAt"`
+	CreatedAt      time.Time              `bson:"created_at" json:"createdAt"`
+	UpdatedAt      time.Time              `bson:"updated_at" json:"updatedAt"`
 }
 
 // Transaction represents a blockchain transaction
 type Transaction struct {
-	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	TxHash          string             `bson:"tx_hash" json:"txHash"`
-	TxID            string             `bson:"tx_id" json:"txId"`
-	Network         string             `bson:"network" json:"network"`
-	BlockNumber     int64              `bson:"block_number" json:"blockNumber"`
-	BlockHash       string             `bson:"block_hash" json:"blockHash"`
-	BlockTimestamp  int64              `bson:"block_timestamp" json:"blockTimestamp"`
-	FromAddress     string             `bson:"from_address" json:"fromAddress"`
-	ToAddress       string             `bson:"to_address" json:"toAddress"`
-	Amount          int64              `bson:"amount" json:"amount"`
-	AssetName       string             `bson:"asset_name,omitempty" json:"assetName,omitempty"`
-	ContractType    string             `bson:"contract_type" json:"contractType"`
-	Success         bool               `bson:"success" json:"success"`
-	EnergyUsage     int64              `bson:"energy_usage,omitempty" json:"energyUsage,omitempty"`
-	EnergyFee       int64              `bson:"energy_fee,omitempty" json:"energyFee,omitempty"`
-	NetUsage        int64              `bson:"net_usage,omitempty" json:"netUsage,omitempty"`
-	NetFee          int64              `bson:"net_fee,omitempty" json:"netFee,omitempty"`
-	Fee             int64              `bson:"fee" json:"fee"`
-	RawData         map[string]interface{} `bson:"raw_data,omitempty" json:"rawData,omitempty"`
-	CreatedAt       time.Time          `bson:"created_at" json:"createdAt"`
-	UpdatedAt       time.Time          `bson:"updated_at" json:"updatedAt"`
+	ID             primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
+	TxHash         string                 `bson:"tx_hash" json:"txHash"`
+	TxID           string                 `bson:"tx_id" json:"txId"`
+	Network        string                 `bson:"network" json:"network"`
+	BlockNumber    int64                  `bson:"block_number" json:"blockNumber"`
+	BlockHash      string                 `bson:"block_hash" json:"blockHash"`
+	BlockTimestamp int64                  `bson:"block_timestamp" json:"blockTimestamp"`
+	FromAddress    string                 `bson:"from_address" json:"fromAddress"`
+	ToAddress      string                 `bson:"to_address" json:"toAddress"`
+	Amount         int64                  `bson:"amount" json:"amount"`
+	AssetName      string                 `bson:"asset_name,omitempty" json:"assetName,omitempty"`
+	ContractType   string                 `bson:"contract_type" json:"contractType"`
+	Success        bool                   `bson:"success" json:"success"`
+	EnergyUsage    int64                  `bson:"energy_usage,omitempty" json:"energyUsage,omitempty"`
+	EnergyFee      int64                  `bson:"energy_fee,omitempty" json:"energyFee,omitempty"`
+	NetUsage       int64                  `bson:"net_usage,omitempty" json:"netUsage,omitempty"`
+	NetFee         int64                  `bson:"net_fee,omitempty" json:"netFee,omitempty"`
+	Fee            int64                  `bson:"fee" json:"fee"`
+	RawData        map[string]interface{} `bson:"raw_data,omitempty" json:"rawData,omitempty"`
+	CreatedAt      time.Time              `bson:"created_at" json:"createdAt"`
+	UpdatedAt      time.Time              `bson:"updated_at" json:"updatedAt"`
 }
 
 // Event represents a blockchain event
 type Event struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	EventID        string             `bson:"event_id" json:"eventId"`
-	Network        string             `bson:"network" json:"network"`
-	Type           string             `bson:"type" json:"type"` // "Transfer", "Approval", "ContractEvent", etc.
-	Address        string             `bson:"address" json:"address"` // Contract or account address
-	TxHash         string             `bson:"tx_hash" json:"txHash"`
-	BlockNumber    int64              `bson:"block_number" json:"blockNumber"`
-	BlockTimestamp int64              `bson:"block_timestamp" json:"blockTimestamp"`
+	ID             primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
+	EventID        string                 `bson:"event_id" json:"eventId"`
+	Network        string                 `bson:"network" json:"network"`
+	Type           string                 `bson:"type" json:"type"`       // "Transfer", "Approval", "ContractEvent", etc.
+	Address        string                 `bson:"address" json:"address"` // Contract or account address
+	TxHash         string                 `bson:"tx_hash" json:"txHash"`
+	BlockNumber    int64                  `bson:"block_number" json:"blockNumber"`
+	BlockTimestamp int64                  `bson:"block_timestamp" json:"blockTimestamp"`
 	Data           map[string]interface{} `bson:"data" json:"data"`
-	Topics         []string           `bson:"topics,omitempty" json:"topics,omitempty"`
-	SubscriptionID string             `bson:"subscription_id,omitempty" json:"subscriptionId,omitempty"`
-	Processed      bool               `bson:"processed" json:"processed"`
-	CreatedAt      time.Time          `bson:"created_at" json:"createdAt"`
-	ExpiresAt      time.Time          `bson:"expires_at,omitempty" json:"expiresAt,omitempty"` // TTL index
+	Topics         []string               `bson:"topics,omitempty" json:"topics,omitempty"`
+	SubscriptionID string                 `bson:"subscription_id,omitempty" json:"subscriptionId,omitempty"`
+	Processed      bool                   `bson:"processed" json:"processed"`
+	CreatedAt      time.Time              `bson:"created_at" json:"createdAt"`
+	ExpiresAt      time.Time              `bson:"expires_at,omitempty" json:"expiresAt,omitempty"` // TTL index
 }
 
 // Subscription represents an active monitoring subscription
 type Subscription struct {
-	ID             primitive.ObjectID  `bson:"_id,omitempty" json:"id"`
-	SubscriptionID string              `bson:"subscription_id" json:"subscriptionId"` // sub_abc123
-	Address        string              `bson:"address" json:"address"`
-	Network        string              `bson:"network" json:"network"`
-	WebhookURL     string              `bson:"webhook_url,omitempty" json:"webhookUrl,omitempty"`
-	Filters        SubscriptionFilters `bson:"filters" json:"filters"`
-	Status         string              `bson:"status" json:"status"` // active, paused, stopped
-	EventsCount    int64               `bson:"events_count" json:"eventsCount"`
-	LastEventAt    *time.Time          `bson:"last_event_at,omitempty" json:"lastEventAt,omitempty"`
-	StartBlock     int64               `bson:"start_block" json:"startBlock"`
-	CurrentBlock   int64               `bson:"current_block" json:"currentBlock"`
-	LastSeenBlock  int64               `bson:"last_seen_block,omitempty" json:"lastSeenBlock,omitempty"` // Block when stopped (for gap scanning)
-	StoppedAt      *time.Time          `bson:"stopped_at,omitempty" json:"stoppedAt,omitempty"`          // Timestamp when stopped
-	CreatedAt      time.Time           `bson:"created_at" json:"createdAt"`
-	UpdatedAt      time.Time           `bson:"updated_at" json:"updatedAt"`
+	ID             primitive.ObjectID     `bson:"_id,omitempty" json:"id"`
+	SubscriptionID string                 `bson:"subscription_id" json:"subscriptionId"` // sub_abc123
+	Address        string                 `bson:"address" json:"address"`
+	Network        string                 `bson:"network" json:"network"`
+	WebhookURL     string                 `bson:"webhook_url,omitempty" json:"webhookUrl,omitempty"`
+	Filters        SubscriptionFilters    `bson:"filters" json:"filters"`
+	Status         string                 `bson:"status" json:"status"` // active, paused, stopped
+	EventsCount    int64                  `bson:"events_count" json:"eventsCount"`
+	LastEventAt    *time.Time             `bson:"last_event_at,omitempty" json:"lastEventAt,omitempty"`
+	StartBlock     int64                  `bson:"start_block" json:"startBlock"`
+	CurrentBlock   int64                  `bson:"current_block" json:"currentBlock"`
+	LastSeenBlock  int64                  `bson:"last_seen_block,omitempty" json:"lastSeenBlock,omitempty"` // Block when stopped (for gap scanning)
+	StoppedAt      *time.Time             `bson:"stopped_at,omitempty" json:"stoppedAt,omitempty"`          // Timestamp when stopped
+	WalletType     string                 `bson:"wallet_type,omitempty" json:"walletType,omitempty"`        // "platform", "nps", "portal", "exchange", "general"
+	UserID         string                 `bson:"user_id,omitempty" json:"userId,omitempty"`                // telegram_id or user identifier
+	Label          string                 `bson:"label,omitempty" json:"label,omitempty"`                   // Optional label
+	Metadata       map[string]interface{} `bson:"metadata,omitempty" json:"metadata,omitempty"`             // Extra data (user_id, account_id, etc.)
+	CreatedAt      time.Time              `bson:"created_at" json:"createdAt"`
+	UpdatedAt      time.Time              `bson:"updated_at" json:"updatedAt"`
 }
 
 // SubscriptionFilters defines filtering rules for subscriptions
 type SubscriptionFilters struct {
-	ContractTypes []string `bson:"contract_types,omitempty" json:"contractTypes,omitempty"`
+	ContractTypes []string `bson:"contract_types,omitempty" json:"contractTypes,omitempty"` // TransferContract, TransferAssetContract, TriggerSmartContract
+	AssetTypes    []string `bson:"asset_types,omitempty" json:"assetTypes,omitempty"`       // "TRX", "TRC10", "TRC20", "*" for all
+	TokenFilter   []string `bson:"token_filter,omitempty" json:"tokenFilter,omitempty"`     // Specific tokens: ["USDT", "BTT"]
 	MinAmount     int64    `bson:"min_amount,omitempty" json:"minAmount,omitempty"`
 	MaxAmount     int64    `bson:"max_amount,omitempty" json:"maxAmount,omitempty"`
 	OnlySuccess   bool     `bson:"only_success" json:"onlySuccess"`

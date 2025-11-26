@@ -25,10 +25,10 @@ type PortoAPIClient struct {
 	logger        *logger.Logger
 }
 
-// PortoTransferEvent represents a TRC20 transfer event for Porto API
-// This is a general-purpose event structure for all wallet types
-type PortoTransferEvent struct {
-	EventType string `json:"eventType"` // "trc20_transfer"
+// TransferEvent represents any type of transfer event for Porto API
+// Unified structure for TRX, TRC10, and TRC20 transfers
+type TransferEvent struct {
+	EventType string `json:"eventType"` // "trx_transfer", "trc10_transfer", "trc20_transfer"
 	EventID   string `json:"eventId"`   // Unique event identifier
 	Timestamp int64  `json:"timestamp"` // Unix timestamp
 	Network   string `json:"network"`   // "tron-mainnet" or "tron-nile"
@@ -39,10 +39,11 @@ type PortoTransferEvent struct {
 	BlockTimestamp int64  `json:"blockTimestamp"`
 	Success        bool   `json:"success"`
 
-	// Transfer details
-	ContractAddress string `json:"contractAddress"` // Token contract (e.g., USDT)
-	TokenSymbol     string `json:"tokenSymbol"`     // "USDT", "USDC", etc.
-	TokenDecimals   int    `json:"tokenDecimals"`   // 6 for USDT
+	// Asset identification
+	AssetType   string `json:"assetType"`         // "TRX", "TRC10", "TRC20"
+	AssetID     string `json:"assetId,omitempty"` // Token ID for TRC10, contract address for TRC20
+	AssetSymbol string `json:"assetSymbol"`       // "TRX", "BTT", "USDT", etc.
+	Decimals    int    `json:"decimals"`          // 6 for TRX/USDT, varies for others
 
 	// Addresses
 	From string `json:"from"` // Sender address (base58)
@@ -52,15 +53,20 @@ type PortoTransferEvent struct {
 	Amount        string `json:"amount"`        // Raw amount in smallest unit
 	AmountDecimal string `json:"amountDecimal"` // Human-readable amount
 
-	// Wallet classification
-	WalletType     string `json:"walletType"`     // "nps", "portal", "exchange", "general"
-	Direction      string `json:"direction"`      // "incoming" or "outgoing"
-	WatchedAddress string `json:"watchedAddress"` // The wallet address that triggered this
-	SubscriptionID string `json:"subscriptionId"` // MongoTron subscription ID
+	// Wallet classification (from subscription registration)
+	WalletType     string `json:"walletType"`       // "platform", "nps", "portal", "exchange", "general"
+	Direction      string `json:"direction"`        // "incoming" or "outgoing"
+	WatchedAddress string `json:"watchedAddress"`   // The wallet address that triggered this
+	SubscriptionID string `json:"subscriptionId"`   // MongoTron subscription ID
+	UserID         string `json:"userId,omitempty"` // User identifier (telegram_id, etc.)
+	Label          string `json:"label,omitempty"`  // Address label
 
 	// Additional metadata from subscription
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
+
+// PortoTransferEvent is an alias for backward compatibility
+type PortoTransferEvent = TransferEvent
 
 // NewPortoAPIClient creates a new Porto API webhook client
 func NewPortoAPIClient(baseURL, webhookPath, webhookSecret, network string, log *logger.Logger) *PortoAPIClient {
@@ -171,30 +177,31 @@ func (c *PortoAPIClient) signPayload(payload []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// CreateTransferEvent creates a PortoTransferEvent from a TRC20Transfer
-func CreateTransferEvent(
+// CreateTRC20TransferEvent creates a TransferEvent from a TRC20Transfer
+func CreateTRC20TransferEvent(
 	transfer *parser.TRC20Transfer,
 	watchedAddress string,
 	subscriptionID string,
 	network string,
-) *PortoTransferEvent {
-	event := &PortoTransferEvent{
-		EventType:       "trc20_transfer",
-		EventID:         fmt.Sprintf("evt_%s_%d", transfer.TxHash[:16], time.Now().UnixNano()),
-		Timestamp:       time.Now().Unix(),
-		Network:         network,
-		TxHash:          transfer.TxHash,
-		BlockNumber:     transfer.BlockNumber,
-		BlockTimestamp:  transfer.BlockTimestamp,
-		Success:         transfer.Success,
-		ContractAddress: transfer.ContractAddress,
-		TokenSymbol:     transfer.TokenSymbol,
-		TokenDecimals:   transfer.TokenDecimals,
-		From:            transfer.From,
-		To:              transfer.To,
-		AmountDecimal:   transfer.AmountDecimal,
-		WatchedAddress:  watchedAddress,
-		SubscriptionID:  subscriptionID,
+) *TransferEvent {
+	event := &TransferEvent{
+		EventType:      "trc20_transfer",
+		EventID:        fmt.Sprintf("evt_%s_%d", transfer.TxHash[:16], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        network,
+		TxHash:         transfer.TxHash,
+		BlockNumber:    transfer.BlockNumber,
+		BlockTimestamp: transfer.BlockTimestamp,
+		Success:        transfer.Success,
+		AssetType:      "TRC20",
+		AssetID:        transfer.ContractAddress, // Contract address for TRC20
+		AssetSymbol:    transfer.TokenSymbol,
+		Decimals:       transfer.TokenDecimals,
+		From:           transfer.From,
+		To:             transfer.To,
+		AmountDecimal:  transfer.AmountDecimal,
+		WatchedAddress: watchedAddress,
+		SubscriptionID: subscriptionID,
 	}
 
 	// Set raw amount
@@ -212,6 +219,143 @@ func CreateTransferEvent(
 	}
 
 	return event
+}
+
+// CreateTransferEvent is an alias for backward compatibility (TRC20)
+func CreateTransferEvent(
+	transfer *parser.TRC20Transfer,
+	watchedAddress string,
+	subscriptionID string,
+	network string,
+) *PortoTransferEvent {
+	return CreateTRC20TransferEvent(transfer, watchedAddress, subscriptionID, network)
+}
+
+// CreateTRXTransferEvent creates a TransferEvent for native TRX transfers
+func CreateTRXTransferEvent(
+	txHash string,
+	blockNumber int64,
+	blockTimestamp int64,
+	success bool,
+	from string,
+	to string,
+	amount int64,
+	watchedAddress string,
+	subscriptionID string,
+	network string,
+) *TransferEvent {
+	// TRX has 6 decimals (SUN)
+	amountDecimal := formatTRXAmount(amount)
+
+	event := &TransferEvent{
+		EventType:      "trx_transfer",
+		EventID:        fmt.Sprintf("evt_%s_%d", txHash[:min(16, len(txHash))], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        network,
+		TxHash:         txHash,
+		BlockNumber:    blockNumber,
+		BlockTimestamp: blockTimestamp,
+		Success:        success,
+		AssetType:      "TRX",
+		AssetID:        "", // No asset ID for native TRX
+		AssetSymbol:    "TRX",
+		Decimals:       6,
+		From:           from,
+		To:             to,
+		Amount:         fmt.Sprintf("%d", amount),
+		AmountDecimal:  amountDecimal,
+		WatchedAddress: watchedAddress,
+		SubscriptionID: subscriptionID,
+	}
+
+	// Determine direction
+	if to == watchedAddress {
+		event.Direction = "incoming"
+	} else if from == watchedAddress {
+		event.Direction = "outgoing"
+	} else {
+		event.Direction = "related"
+	}
+
+	return event
+}
+
+// CreateTRC10TransferEvent creates a TransferEvent for TRC10 token transfers
+func CreateTRC10TransferEvent(
+	txHash string,
+	blockNumber int64,
+	blockTimestamp int64,
+	success bool,
+	from string,
+	to string,
+	amount int64,
+	assetID string,
+	assetSymbol string,
+	decimals int,
+	watchedAddress string,
+	subscriptionID string,
+	network string,
+) *TransferEvent {
+	amountDecimal := formatAmountWithDecimals(amount, decimals)
+
+	event := &TransferEvent{
+		EventType:      "trc10_transfer",
+		EventID:        fmt.Sprintf("evt_%s_%d", txHash[:min(16, len(txHash))], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        network,
+		TxHash:         txHash,
+		BlockNumber:    blockNumber,
+		BlockTimestamp: blockTimestamp,
+		Success:        success,
+		AssetType:      "TRC10",
+		AssetID:        assetID,
+		AssetSymbol:    assetSymbol,
+		Decimals:       decimals,
+		From:           from,
+		To:             to,
+		Amount:         fmt.Sprintf("%d", amount),
+		AmountDecimal:  amountDecimal,
+		WatchedAddress: watchedAddress,
+		SubscriptionID: subscriptionID,
+	}
+
+	// Determine direction
+	if to == watchedAddress {
+		event.Direction = "incoming"
+	} else if from == watchedAddress {
+		event.Direction = "outgoing"
+	} else {
+		event.Direction = "related"
+	}
+
+	return event
+}
+
+// formatTRXAmount formats TRX amount from SUN (6 decimals)
+func formatTRXAmount(sunAmount int64) string {
+	return formatAmountWithDecimals(sunAmount, 6)
+}
+
+// formatAmountWithDecimals formats an amount with the given decimal places
+func formatAmountWithDecimals(amount int64, decimals int) string {
+	if decimals == 0 {
+		return fmt.Sprintf("%d", amount)
+	}
+
+	amountStr := fmt.Sprintf("%d", amount)
+	if len(amountStr) <= decimals {
+		return "0." + fmt.Sprintf("%0*s", decimals, amountStr)
+	}
+	pos := len(amountStr) - decimals
+	return amountStr[:pos] + "." + amountStr[pos:]
+}
+
+// min returns the smaller of two ints
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // Config holds Porto API client configuration
