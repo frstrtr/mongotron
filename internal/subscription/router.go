@@ -134,18 +134,44 @@ func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
 	// Get smart contract data from EventData
 	scData, ok := req.Event.EventData["smartContract"].(map[string]interface{})
 	if !ok {
+		r.logger.Debug().
+			Str("txHash", req.Event.TransactionID).
+			Msg("TRC20 check: No smartContract data in event")
 		return
 	}
 
 	// Check if this is a transfer method
 	methodSig, _ := scData["methodSignature"].(string)
 	if methodSig != "a9059cbb" && methodSig != "23b872dd" {
+		r.logger.Debug().
+			Str("txHash", req.Event.TransactionID).
+			Str("methodSig", methodSig).
+			Msg("TRC20 check: Not a transfer method")
 		return // Not a transfer
 	}
 
+	// Get the contract address (the token contract being called)
+	contractAddress := req.Event.To
+
+	// Check if this is a USDT contract
+	if !r.trc20Parser.IsUSDTContract(contractAddress) {
+		r.logger.Debug().
+			Str("txHash", req.Event.TransactionID).
+			Str("contractAddress", contractAddress).
+			Msg("TRC20 check: Not a USDT contract")
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("contractAddress", contractAddress).
+		Str("methodSig", methodSig).
+		Str("watchedAddress", req.Subscription.Address).
+		Msg("USDT transfer detected, processing...")
+
 	// Parse the transfer details
 	transfer := &parser.TRC20Transfer{
-		ContractAddress: req.Event.To, // Contract being called
+		ContractAddress: contractAddress,
 		TxHash:          req.Event.TransactionID,
 		BlockNumber:     req.Event.BlockNumber,
 		BlockTimestamp:  req.Event.BlockTimestamp,
@@ -153,24 +179,44 @@ func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
 	}
 
 	// Get token info
-	transfer.TokenSymbol, transfer.TokenDecimals = r.getTokenInfo(req.Event.To)
+	transfer.TokenSymbol, transfer.TokenDecimals = r.getTokenInfo(contractAddress)
 
-	// Extract parameters
-	if params, ok := scData["parameters"].(map[string]interface{}); ok {
-		if to, ok := params["to"].(string); ok {
-			transfer.ToHex = to
-			transfer.To = parser.HexToBase58(to)
-		}
-		if from, ok := params["from"].(string); ok {
-			transfer.FromHex = from
-			transfer.From = parser.HexToBase58(from)
-		}
-		if amountStr, ok := params["amount"].(string); ok {
-			transfer.AmountDecimal = r.formatAmount(amountStr, transfer.TokenDecimals)
+	// Extract parameters from the smart contract call
+	params, hasParams := scData["parameters"].(map[string]interface{})
+	if !hasParams {
+		r.logger.Warn().
+			Str("txHash", req.Event.TransactionID).
+			Msg("TRC20 transfer: No parameters found in smart contract data")
+		return
+	}
+
+	// Extract recipient address
+	if to, ok := params["to"].(string); ok {
+		transfer.ToHex = to
+		transfer.To = parser.HexToBase58(to)
+	}
+
+	// Extract sender address (for transferFrom)
+	if from, ok := params["from"].(string); ok {
+		transfer.FromHex = from
+		transfer.From = parser.HexToBase58(from)
+	}
+
+	// Extract amount - handle both string and numeric types
+	if amountVal := params["amount"]; amountVal != nil {
+		switch v := amountVal.(type) {
+		case string:
+			transfer.AmountDecimal = r.formatAmount(v, transfer.TokenDecimals)
+		case float64:
+			transfer.AmountDecimal = r.formatAmount(fmt.Sprintf("%.0f", v), transfer.TokenDecimals)
+		case int64:
+			transfer.AmountDecimal = r.formatAmount(fmt.Sprintf("%d", v), transfer.TokenDecimals)
+		case int:
+			transfer.AmountDecimal = r.formatAmount(fmt.Sprintf("%d", v), transfer.TokenDecimals)
 		}
 	}
 
-	// For transfer() method, From is the transaction sender
+	// For transfer() method, From is the transaction sender (owner_address)
 	if methodSig == "a9059cbb" {
 		transfer.From = parser.HexToBase58(req.Event.From)
 		transfer.FromHex = req.Event.From
@@ -179,13 +225,54 @@ func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
 		transfer.MethodType = "transferFrom"
 	}
 
+	r.logger.Info().
+		Str("txHash", transfer.TxHash).
+		Str("token", transfer.TokenSymbol).
+		Str("from", transfer.From).
+		Str("to", transfer.To).
+		Str("amount", transfer.AmountDecimal).
+		Str("watchedAddress", req.Subscription.Address).
+		Msg("Parsed TRC20 transfer details")
+
+	// Check if this transfer involves our watched address
+	watchedAddr := req.Subscription.Address
+	watchedAddrHex := parser.Base58ToHex(watchedAddr)
+
+	isIncoming := transfer.To == watchedAddr || transfer.ToHex == watchedAddrHex
+	isOutgoing := transfer.From == watchedAddr || transfer.FromHex == watchedAddrHex
+
+	if !isIncoming && !isOutgoing {
+		r.logger.Debug().
+			Str("txHash", transfer.TxHash).
+			Str("transferTo", transfer.To).
+			Str("transferFrom", transfer.From).
+			Str("watchedAddress", watchedAddr).
+			Msg("TRC20 transfer does not involve watched address")
+		return
+	}
+
 	// Create Porto event
 	portoEvent := webhook.CreateTransferEvent(
 		transfer,
-		req.Subscription.Address, // The watched NPS wallet
+		watchedAddr,
 		req.Subscription.SubscriptionID,
 		r.network,
 	)
+
+	// Set direction based on our analysis
+	if isIncoming {
+		portoEvent.Direction = "incoming"
+	} else {
+		portoEvent.Direction = "outgoing"
+	}
+
+	r.logger.Info().
+		Str("txHash", transfer.TxHash).
+		Str("token", transfer.TokenSymbol).
+		Str("to", transfer.To).
+		Str("amount", transfer.AmountDecimal).
+		Str("direction", portoEvent.Direction).
+		Msg("Sending TRC20 transfer notification to Porto API")
 
 	// Send to Porto API
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -203,7 +290,8 @@ func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
 			Str("token", transfer.TokenSymbol).
 			Str("to", transfer.To).
 			Str("amount", transfer.AmountDecimal).
-			Msg("TRC20 transfer detected and sent to Porto API")
+			Str("direction", portoEvent.Direction).
+			Msg("TRC20 transfer notification sent to Porto API successfully")
 	}
 }
 

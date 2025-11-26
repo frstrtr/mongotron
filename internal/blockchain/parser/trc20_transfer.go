@@ -11,7 +11,7 @@ import (
 var (
 	// Mainnet USDT (TRC20)
 	USDTMainnet = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
-	// Nile Testnet USDT (TRC20)
+	// Nile Testnet USDT (TRC20) - Used for testnet platform
 	USDTNile = "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf"
 	// Shasta Testnet USDT
 	USDTShasta = "TG3XXyExBkPp9nzdajDZsozEu4BkaSJozs"
@@ -118,6 +118,19 @@ func (p *TRC20Parser) ParseTransfer(contractAddress string, data []byte) *TRC20T
 
 // IsUSDTContract checks if the contract address is a known USDT contract
 func (p *TRC20Parser) IsUSDTContract(address string) bool {
+	// Check base58 addresses
+	if address == USDTMainnet || address == USDTNile || address == USDTShasta {
+		return true
+	}
+	// Check hex addresses
+	if address == USDTMainnetHex || address == USDTNileHex || address == USDTShastaHex {
+		return true
+	}
+	return false
+}
+
+// IsUSDTContractStatic is a static version that can be called without a parser instance
+func IsUSDTContractStatic(address string) bool {
 	// Check base58 addresses
 	if address == USDTMainnet || address == USDTNile || address == USDTShasta {
 		return true
