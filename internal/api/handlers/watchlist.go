@@ -59,6 +59,7 @@ type WatchListResponse struct {
 	SubscriptionID string                 `json:"subscriptionId"`
 	Address        string                 `json:"address"`
 	WalletType     WalletType             `json:"walletType"`
+	UserID         string                 `json:"userId,omitempty"`
 	Label          string                 `json:"label,omitempty"`
 	WebhookURL     string                 `json:"webhookUrl,omitempty"`
 	TokenFilter    []string               `json:"tokenFilter,omitempty"`
@@ -339,6 +340,7 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 			SubscriptionID: sub.SubscriptionID,
 			Address:        sub.Address,
 			WalletType:     WalletType(sub.WalletType),
+			UserID:         sub.UserID,
 			Label:          sub.Label,
 			WebhookURL:     sub.WebhookURL,
 			TokenFilter:    addr.TokenFilter,
@@ -484,9 +486,11 @@ func (h *WatchListHandler) GetWatchList(c *fiber.Ctx) error {
 	// Convert to watch list response
 	watchList := make([]WatchListResponse, 0, len(subs))
 	for _, sub := range subs {
-		// Extract wallet type from metadata or default to general
-		walletType := WalletTypeGeneral
-		// TODO: Read from subscription metadata when stored
+		// Get wallet type from subscription (default to general if empty)
+		walletType := WalletType(sub.WalletType)
+		if walletType == "" {
+			walletType = WalletTypeGeneral
+		}
 
 		// Apply wallet type filter if specified
 		if walletTypeFilter != "" && string(walletType) != walletTypeFilter {
@@ -497,11 +501,14 @@ func (h *WatchListHandler) GetWatchList(c *fiber.Ctx) error {
 			SubscriptionID: sub.SubscriptionID,
 			Address:        sub.Address,
 			WalletType:     walletType,
+			UserID:         sub.UserID,
+			Label:          sub.Label,
 			WebhookURL:     sub.WebhookURL,
 			Status:         sub.Status,
 			EventsCount:    sub.EventsCount,
 			StartBlock:     sub.StartBlock,
 			CurrentBlock:   sub.CurrentBlock,
+			Metadata:       sub.Metadata,
 			CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
@@ -533,12 +540,24 @@ func (h *WatchListHandler) GetWatchedAddress(c *fiber.Ctx) error {
 		})
 	}
 
+	// Get wallet type from subscription (default to general if empty)
+	walletType := WalletType(sub.WalletType)
+	if walletType == "" {
+		walletType = WalletTypeGeneral
+	}
+
 	response := WatchListResponse{
 		SubscriptionID: sub.SubscriptionID,
 		Address:        sub.Address,
+		WalletType:     walletType,
+		UserID:         sub.UserID,
+		Label:          sub.Label,
 		WebhookURL:     sub.WebhookURL,
 		Status:         sub.Status,
 		EventsCount:    sub.EventsCount,
+		StartBlock:     sub.StartBlock,
+		CurrentBlock:   sub.CurrentBlock,
+		Metadata:       sub.Metadata,
 		CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 
