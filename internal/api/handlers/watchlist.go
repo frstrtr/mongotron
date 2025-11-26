@@ -254,6 +254,12 @@ func buildContractTypes(assetTypes []string) []string {
 				contractTypes = append(contractTypes, "AccountPermissionUpdateContract")
 			}
 
+		// Claim voting rewards
+		case "CLAIM":
+			if !contains(contractTypes, "WithdrawBalanceContract") {
+				contractTypes = append(contractTypes, "WithdrawBalanceContract")
+			}
+
 		// All operations for full gas station monitoring
 		case "ALL_OPERATIONS", "FULL":
 			return []string{
@@ -267,6 +273,7 @@ func buildContractTypes(assetTypes []string) []string {
 				"UnDelegateResourceContract",
 				"VoteWitnessContract",
 				"AccountPermissionUpdateContract",
+				"WithdrawBalanceContract",
 			}
 		}
 	}

@@ -91,6 +91,8 @@ func (p *TronParser) ExtractAddresses(contract *core.Transaction_Contract) []str
 		addresses = append(addresses, p.parseVoteWitnessContract(contract)...)
 	case core.Transaction_Contract_AccountPermissionUpdateContract:
 		addresses = append(addresses, p.parseAccountPermissionUpdateContract(contract)...)
+	case core.Transaction_Contract_WithdrawBalanceContract:
+		addresses = append(addresses, p.parseWithdrawBalanceContract(contract)...)
 	default:
 		// Extract addresses from raw parameter data
 		addresses = append(addresses, p.parseGenericContract(contract)...)
@@ -536,6 +538,31 @@ func (p *TronParser) ParseWithdrawDetails(contract *core.Transaction_Contract) (
 		return ""
 	}
 
+	return p.encodeAddress(withdraw.GetOwnerAddress())
+}
+
+// parseWithdrawBalanceContract extracts addresses from claim rewards transaction
+func (p *TronParser) parseWithdrawBalanceContract(contract *core.Transaction_Contract) []string {
+	var withdraw core.WithdrawBalanceContract
+	if err := proto.Unmarshal(contract.GetParameter().GetValue(), &withdraw); err != nil {
+		p.logger.Error().Err(err).Msg("Failed to unmarshal WithdrawBalanceContract")
+		return nil
+	}
+
+	var addresses []string
+	if len(withdraw.GetOwnerAddress()) > 0 {
+		addresses = append(addresses, p.encodeAddress(withdraw.GetOwnerAddress()))
+	}
+	return addresses
+}
+
+// ParseClaimRewardsDetails returns claim rewards details
+func (p *TronParser) ParseClaimRewardsDetails(contract *core.Transaction_Contract) (owner string) {
+	var withdraw core.WithdrawBalanceContract
+	if err := proto.Unmarshal(contract.GetParameter().GetValue(), &withdraw); err != nil {
+		p.logger.Error().Err(err).Msg("Failed to unmarshal WithdrawBalanceContract")
+		return ""
+	}
 	return p.encodeAddress(withdraw.GetOwnerAddress())
 }
 

@@ -151,6 +151,9 @@ func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 		case "AccountPermissionUpdateContract":
 			// CRITICAL: Permission changes - immediate processing
 			go r.handlePermissionOperation(req)
+		case "WithdrawBalanceContract":
+			// Claim voting rewards
+			go r.handleClaimRewardsOperation(req)
 		}
 	}
 
@@ -997,6 +1000,59 @@ func (r *EventRouter) handlePermissionOperation(req *RouteEventRequest) {
 		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("CRITICAL: Failed to send permission change notification!")
 	} else {
 		r.logger.Info().Str("txHash", event.TxHash).Msg("Permission change notification sent to Porto API")
+	}
+}
+
+// handleClaimRewardsOperation handles WithdrawBalanceContract (claim voting rewards)
+func (r *EventRouter) handleClaimRewardsOperation(req *RouteEventRequest) {
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		return
+	}
+
+	owner := r.tronParser.ParseClaimRewardsDetails(contract)
+	if owner == "" {
+		return
+	}
+
+	ownerBase58 := parser.HexToBase58(owner)
+	watchedAddr := req.Subscription.Address
+
+	if ownerBase58 != watchedAddr {
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Msg("Claim rewards operation detected")
+
+	event := &webhook.OperationEvent{
+		EventType:      "claim_rewards",
+		EventID:        fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        r.network,
+		TxHash:         req.Event.TransactionID,
+		BlockNumber:    req.Event.BlockNumber,
+		BlockTimestamp: req.Event.BlockTimestamp,
+		Success:        req.Event.Success,
+		OperationType:  "CLAIM",
+		OwnerAddress:   ownerBase58,
+		WalletType:     req.Subscription.WalletType,
+		WatchedAddress: watchedAddr,
+		SubscriptionID: req.Subscription.SubscriptionID,
+		UserID:         req.Subscription.UserID,
+		Label:          req.Subscription.Label,
+		Metadata:       req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send claim rewards notification")
+	} else {
+		r.logger.Info().Str("txHash", event.TxHash).Msg("Claim rewards notification sent to Porto API")
 	}
 }
 

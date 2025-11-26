@@ -83,7 +83,7 @@ type OperationEvent struct {
 	Success        bool   `json:"success"`
 
 	// Operation identification
-	OperationType string `json:"operationType"` // "STAKE", "UNSTAKE", "DELEGATE", "UNDELEGATE", "VOTE", "PERMISSION"
+	OperationType string `json:"operationType"` // "STAKE", "UNSTAKE", "DELEGATE", "UNDELEGATE", "VOTE", "PERMISSION", "CLAIM"
 	OwnerAddress  string `json:"ownerAddress"`  // Who performed the operation
 
 	// For delegation operations
