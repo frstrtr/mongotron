@@ -68,6 +68,79 @@ type TransferEvent struct {
 // PortoTransferEvent is an alias for backward compatibility
 type PortoTransferEvent = TransferEvent
 
+// OperationEvent represents a gas station operation event for Porto API
+// Used for staking, delegation, voting, and permission changes
+type OperationEvent struct {
+	EventType string `json:"eventType"` // "freeze_balance", "delegate_resource", "vote_witness", "permission_update"
+	EventID   string `json:"eventId"`   // Unique event identifier
+	Timestamp int64  `json:"timestamp"` // Unix timestamp
+	Network   string `json:"network"`   // "tron-mainnet" or "tron-nile"
+
+	// Transaction details
+	TxHash         string `json:"txHash"`
+	BlockNumber    int64  `json:"blockNumber"`
+	BlockTimestamp int64  `json:"blockTimestamp"`
+	Success        bool   `json:"success"`
+
+	// Operation identification
+	OperationType string `json:"operationType"` // "STAKE", "UNSTAKE", "DELEGATE", "UNDELEGATE", "VOTE", "PERMISSION"
+	OwnerAddress  string `json:"ownerAddress"`  // Who performed the operation
+
+	// For delegation operations
+	ReceiverAddress string `json:"receiverAddress,omitempty"` // Delegation target
+	ResourceType    string `json:"resourceType,omitempty"`    // "ENERGY" or "BANDWIDTH"
+	ResourceAmount  int64  `json:"resourceAmount,omitempty"`  // Amount in SUN
+	Lock            bool   `json:"lock,omitempty"`            // Whether delegation is locked
+	LockPeriod      int64  `json:"lockPeriod,omitempty"`      // Lock duration
+
+	// For staking operations
+	StakeAmount   int64 `json:"stakeAmount,omitempty"`   // Amount staked (SUN)
+	UnstakeAmount int64 `json:"unstakeAmount,omitempty"` // Amount unstaked (SUN)
+
+	// For voting operations
+	Votes      []VoteEntry `json:"votes,omitempty"`
+	TotalVotes int64       `json:"totalVotes,omitempty"`
+
+	// For permission operations (CRITICAL)
+	PermissionChanges *PermissionChangeInfo `json:"permissionChanges,omitempty"`
+	Priority          string                `json:"priority,omitempty"` // "HIGH" for permission changes
+
+	// Wallet classification (from subscription registration)
+	WalletType     string `json:"walletType"`     // "gasstation", "nps", etc.
+	WatchedAddress string `json:"watchedAddress"` // The wallet that triggered this
+	SubscriptionID string `json:"subscriptionId"` // MongoTron subscription ID
+	UserID         string `json:"userId,omitempty"`
+	Label          string `json:"label,omitempty"`
+
+	// Additional metadata from subscription
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// VoteEntry represents a single vote for an SR
+type VoteEntry struct {
+	SRAddress string `json:"srAddress"`
+	VoteCount int64  `json:"voteCount"`
+}
+
+// PermissionChangeInfo contains permission change details for security alerts
+type PermissionChangeInfo struct {
+	OwnerPermission  *PermissionInfo   `json:"ownerPermission,omitempty"`
+	ActivePermission []*PermissionInfo `json:"activePermission,omitempty"`
+}
+
+// PermissionInfo contains permission details
+type PermissionInfo struct {
+	Name      string    `json:"name"`
+	Threshold int64     `json:"threshold"`
+	Keys      []KeyInfo `json:"keys"`
+}
+
+// KeyInfo contains key/signer details
+type KeyInfo struct {
+	Address string `json:"address"`
+	Weight  int64  `json:"weight"`
+}
+
 // NewPortoAPIClient creates a new Porto API webhook client
 func NewPortoAPIClient(baseURL, webhookPath, webhookSecret, network string, log *logger.Logger) *PortoAPIClient {
 	if log == nil {
@@ -175,6 +248,85 @@ func (c *PortoAPIClient) signPayload(payload []byte) string {
 	h := hmac.New(sha256.New, []byte(c.webhookSecret))
 	h.Write(payload)
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// SendOperationNotification sends a gas station operation notification to Porto API
+func (c *PortoAPIClient) SendOperationNotification(ctx context.Context, event *OperationEvent) error {
+	if c.baseURL == "" {
+		c.logger.Warn().Msg("Porto API URL not configured, skipping operation webhook")
+		return nil
+	}
+
+	// Marshal event to JSON
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal operation event: %w", err)
+	}
+
+	// Use operation-specific webhook path
+	webhookURL := c.baseURL + "/v1/webhooks/mongotron/operation"
+
+	// Pre-compute signature and headers
+	signature := c.signPayload(payload)
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	subscriptionID := event.SubscriptionID
+
+	// Send request with retries
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		// Set headers
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-MongoTron-Event", event.EventType)
+		req.Header.Set("X-MongoTron-Operation", event.OperationType)
+		req.Header.Set("X-MongoTron-Signature", signature)
+		req.Header.Set("X-MongoTron-Timestamp", timestamp)
+		req.Header.Set("X-Subscription-ID", subscriptionID)
+		if event.Priority != "" {
+			req.Header.Set("X-MongoTron-Priority", event.Priority)
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			c.logger.Warn().
+				Err(err).
+				Int("attempt", attempt).
+				Str("url", webhookURL).
+				Str("operation", event.OperationType).
+				Msg("Operation webhook delivery failed, retrying...")
+			time.Sleep(time.Duration(attempt) * time.Second)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			c.logger.Info().
+				Str("eventId", event.EventID).
+				Str("txHash", event.TxHash).
+				Str("operation", event.OperationType).
+				Str("owner", event.OwnerAddress).
+				Msg("Operation notification sent to Porto API")
+			return nil
+		}
+
+		lastErr = fmt.Errorf("webhook returned status %d", resp.StatusCode)
+		c.logger.Warn().
+			Int("status", resp.StatusCode).
+			Int("attempt", attempt).
+			Str("operation", event.OperationType).
+			Msg("Operation webhook returned non-2xx status")
+
+		if attempt < 3 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+	}
+
+	return fmt.Errorf("failed to deliver operation webhook after 3 attempts: %w", lastErr)
 }
 
 // CreateTRC20TransferEvent creates a TransferEvent from a TRC20Transfer

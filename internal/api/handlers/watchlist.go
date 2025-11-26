@@ -199,7 +199,7 @@ func buildContractTypes(assetTypes []string) []string {
 		return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
 	}
 
-	contractTypes := make([]string, 0, 3)
+	contractTypes := make([]string, 0, 10)
 	for _, asset := range assetTypes {
 		switch asset {
 		case "TRX":
@@ -215,13 +215,64 @@ func buildContractTypes(assetTypes []string) []string {
 				contractTypes = append(contractTypes, "TriggerSmartContract")
 			}
 		case "*":
-			// All types
+			// All transfer types (legacy)
 			return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
+
+		// Staking operations
+		case "STAKE", "FREEZE":
+			if !contains(contractTypes, "FreezeBalanceV2Contract") {
+				contractTypes = append(contractTypes, "FreezeBalanceV2Contract")
+			}
+		case "UNSTAKE", "UNFREEZE":
+			if !contains(contractTypes, "UnfreezeBalanceV2Contract") {
+				contractTypes = append(contractTypes, "UnfreezeBalanceV2Contract")
+			}
+		case "WITHDRAW_UNSTAKE":
+			if !contains(contractTypes, "WithdrawExpireUnfreezeContract") {
+				contractTypes = append(contractTypes, "WithdrawExpireUnfreezeContract")
+			}
+
+		// Delegation operations
+		case "DELEGATE":
+			if !contains(contractTypes, "DelegateResourceContract") {
+				contractTypes = append(contractTypes, "DelegateResourceContract")
+			}
+		case "UNDELEGATE":
+			if !contains(contractTypes, "UnDelegateResourceContract") {
+				contractTypes = append(contractTypes, "UnDelegateResourceContract")
+			}
+
+		// Voting operations
+		case "VOTE":
+			if !contains(contractTypes, "VoteWitnessContract") {
+				contractTypes = append(contractTypes, "VoteWitnessContract")
+			}
+
+		// Permission operations (CRITICAL for security)
+		case "PERMISSION":
+			if !contains(contractTypes, "AccountPermissionUpdateContract") {
+				contractTypes = append(contractTypes, "AccountPermissionUpdateContract")
+			}
+
+		// All operations for full gas station monitoring
+		case "ALL_OPERATIONS", "FULL":
+			return []string{
+				"TransferContract",
+				"TransferAssetContract",
+				"TriggerSmartContract",
+				"FreezeBalanceV2Contract",
+				"UnfreezeBalanceV2Contract",
+				"WithdrawExpireUnfreezeContract",
+				"DelegateResourceContract",
+				"UnDelegateResourceContract",
+				"VoteWitnessContract",
+				"AccountPermissionUpdateContract",
+			}
 		}
 	}
 
 	if len(contractTypes) == 0 {
-		// Fallback to all types
+		// Fallback to all transfer types
 		return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
 	}
 

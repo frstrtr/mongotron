@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fbsobreira/gotron-sdk/pkg/proto/core"
 	"github.com/frstrtr/mongotron/internal/blockchain/monitor"
 	"github.com/frstrtr/mongotron/internal/blockchain/parser"
 	"github.com/frstrtr/mongotron/internal/storage"
@@ -26,6 +27,7 @@ type EventRouter struct {
 	webhookClient *http.Client
 	portoClient   *webhook.PortoAPIClient
 	trc20Parser   *parser.TRC20Parser
+	tronParser    *parser.TronParser
 	network       string // "tron-mainnet" or "tron-nile"
 	mu            sync.RWMutex
 }
@@ -52,6 +54,7 @@ func NewEventRouter(db *storage.Database, log *logger.Logger) *EventRouter {
 		wsClients:   make(map[string][]*WebSocketClient),
 		eventQueue:  make(chan *RouteEventRequest, 1000),
 		trc20Parser: parser.NewTRC20Parser(),
+		tronParser:  parser.NewTronParser(log),
 		network:     "tron-nile", // Default to testnet
 		webhookClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -132,6 +135,22 @@ func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 		case "TriggerSmartContract":
 			// TRC20 token transfer (smart contract call)
 			go r.handleTRC20Transfer(req)
+		// Gas station operations
+		case "FreezeBalanceV2Contract":
+			go r.handleFreezeOperation(req)
+		case "UnfreezeBalanceV2Contract":
+			go r.handleUnfreezeOperation(req)
+		case "WithdrawExpireUnfreezeContract":
+			go r.handleWithdrawOperation(req)
+		case "DelegateResourceContract":
+			go r.handleDelegateOperation(req)
+		case "UnDelegateResourceContract":
+			go r.handleUnDelegateOperation(req)
+		case "VoteWitnessContract":
+			go r.handleVoteOperation(req)
+		case "AccountPermissionUpdateContract":
+			// CRITICAL: Permission changes - immediate processing
+			go r.handlePermissionOperation(req)
 		}
 	}
 
@@ -514,6 +533,471 @@ func (r *EventRouter) getTRC10TokenInfo(assetID string) (string, int) {
 	}
 	// Unknown token - return asset ID as symbol with default decimals
 	return assetID, 0
+}
+
+// ============================================================================
+// Gas Station Operation Handlers
+// ============================================================================
+
+// getContractFromEvent extracts the first contract from an event's raw transaction
+func (r *EventRouter) getContractFromEvent(event *monitor.AddressEvent) *core.Transaction_Contract {
+	if event == nil || event.RawTransaction == nil {
+		return nil
+	}
+	rawData := event.RawTransaction.GetRawData()
+	if rawData == nil {
+		return nil
+	}
+	contracts := rawData.GetContract()
+	if len(contracts) == 0 {
+		return nil
+	}
+	return contracts[0]
+}
+
+// handleFreezeOperation handles FreezeBalanceV2Contract (staking)
+func (r *EventRouter) handleFreezeOperation(req *RouteEventRequest) {
+	// Get contract from raw transaction
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		r.logger.Debug().Str("txHash", req.Event.TransactionID).Msg("Freeze operation: no contract in event")
+		return
+	}
+
+	owner, resourceType, amount := r.tronParser.ParseFreezeDetails(contract)
+	if owner == "" {
+		r.logger.Debug().
+			Str("txHash", req.Event.TransactionID).
+			Msg("Freeze operation: could not parse details")
+		return
+	}
+
+	// Convert hex to base58
+	ownerBase58 := parser.HexToBase58(owner)
+	watchedAddr := req.Subscription.Address
+
+	// Verify this involves our watched address
+	if ownerBase58 != watchedAddr {
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Str("resourceType", resourceType).
+		Int64("amount", amount).
+		Msg("Stake operation detected")
+
+	event := &webhook.OperationEvent{
+		EventType:      "freeze_balance",
+		EventID:        fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        r.network,
+		TxHash:         req.Event.TransactionID,
+		BlockNumber:    req.Event.BlockNumber,
+		BlockTimestamp: req.Event.BlockTimestamp,
+		Success:        req.Event.Success,
+		OperationType:  "STAKE",
+		OwnerAddress:   ownerBase58,
+		ResourceType:   resourceType,
+		StakeAmount:    amount,
+		WalletType:     req.Subscription.WalletType,
+		WatchedAddress: watchedAddr,
+		SubscriptionID: req.Subscription.SubscriptionID,
+		UserID:         req.Subscription.UserID,
+		Label:          req.Subscription.Label,
+		Metadata:       req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send stake notification")
+	}
+}
+
+// handleUnfreezeOperation handles UnfreezeBalanceV2Contract (unstaking)
+func (r *EventRouter) handleUnfreezeOperation(req *RouteEventRequest) {
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		return
+	}
+
+	owner, resourceType, amount := r.tronParser.ParseUnfreezeDetails(contract)
+	if owner == "" {
+		return
+	}
+
+	ownerBase58 := parser.HexToBase58(owner)
+	watchedAddr := req.Subscription.Address
+
+	if ownerBase58 != watchedAddr {
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Str("resourceType", resourceType).
+		Int64("amount", amount).
+		Msg("Unstake operation detected")
+
+	event := &webhook.OperationEvent{
+		EventType:      "unfreeze_balance",
+		EventID:        fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        r.network,
+		TxHash:         req.Event.TransactionID,
+		BlockNumber:    req.Event.BlockNumber,
+		BlockTimestamp: req.Event.BlockTimestamp,
+		Success:        req.Event.Success,
+		OperationType:  "UNSTAKE",
+		OwnerAddress:   ownerBase58,
+		ResourceType:   resourceType,
+		UnstakeAmount:  amount,
+		WalletType:     req.Subscription.WalletType,
+		WatchedAddress: watchedAddr,
+		SubscriptionID: req.Subscription.SubscriptionID,
+		UserID:         req.Subscription.UserID,
+		Label:          req.Subscription.Label,
+		Metadata:       req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send unstake notification")
+	}
+}
+
+// handleWithdrawOperation handles WithdrawExpireUnfreezeContract
+func (r *EventRouter) handleWithdrawOperation(req *RouteEventRequest) {
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		return
+	}
+
+	owner := r.tronParser.ParseWithdrawDetails(contract)
+	if owner == "" {
+		return
+	}
+
+	ownerBase58 := parser.HexToBase58(owner)
+	watchedAddr := req.Subscription.Address
+
+	if ownerBase58 != watchedAddr {
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Msg("Withdraw unstaked TRX operation detected")
+
+	event := &webhook.OperationEvent{
+		EventType:      "withdraw_unstake",
+		EventID:        fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        r.network,
+		TxHash:         req.Event.TransactionID,
+		BlockNumber:    req.Event.BlockNumber,
+		BlockTimestamp: req.Event.BlockTimestamp,
+		Success:        req.Event.Success,
+		OperationType:  "WITHDRAW",
+		OwnerAddress:   ownerBase58,
+		WalletType:     req.Subscription.WalletType,
+		WatchedAddress: watchedAddr,
+		SubscriptionID: req.Subscription.SubscriptionID,
+		UserID:         req.Subscription.UserID,
+		Label:          req.Subscription.Label,
+		Metadata:       req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send withdraw notification")
+	}
+}
+
+// handleDelegateOperation handles DelegateResourceContract
+func (r *EventRouter) handleDelegateOperation(req *RouteEventRequest) {
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		return
+	}
+
+	details := r.tronParser.ParseDelegateDetails(contract)
+	if details == nil {
+		return
+	}
+
+	ownerBase58 := parser.HexToBase58(details.Owner)
+	receiverBase58 := parser.HexToBase58(details.Receiver)
+	watchedAddr := req.Subscription.Address
+
+	// Check if watched address is involved (as delegator or receiver)
+	if ownerBase58 != watchedAddr && receiverBase58 != watchedAddr {
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Str("receiver", receiverBase58).
+		Str("resourceType", details.ResourceType).
+		Int64("amount", details.Amount).
+		Msg("Delegate operation detected")
+
+	event := &webhook.OperationEvent{
+		EventType:       "delegate_resource",
+		EventID:         fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:       time.Now().Unix(),
+		Network:         r.network,
+		TxHash:          req.Event.TransactionID,
+		BlockNumber:     req.Event.BlockNumber,
+		BlockTimestamp:  req.Event.BlockTimestamp,
+		Success:         req.Event.Success,
+		OperationType:   "DELEGATE",
+		OwnerAddress:    ownerBase58,
+		ReceiverAddress: receiverBase58,
+		ResourceType:    details.ResourceType,
+		ResourceAmount:  details.Amount,
+		Lock:            details.Lock,
+		LockPeriod:      details.LockPeriod,
+		WalletType:      req.Subscription.WalletType,
+		WatchedAddress:  watchedAddr,
+		SubscriptionID:  req.Subscription.SubscriptionID,
+		UserID:          req.Subscription.UserID,
+		Label:           req.Subscription.Label,
+		Metadata:        req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send delegate notification")
+	}
+}
+
+// handleUnDelegateOperation handles UnDelegateResourceContract
+func (r *EventRouter) handleUnDelegateOperation(req *RouteEventRequest) {
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		return
+	}
+
+	details := r.tronParser.ParseUnDelegateDetails(contract)
+	if details == nil {
+		return
+	}
+
+	ownerBase58 := parser.HexToBase58(details.Owner)
+	receiverBase58 := parser.HexToBase58(details.Receiver)
+	watchedAddr := req.Subscription.Address
+
+	// Check if watched address is involved
+	if ownerBase58 != watchedAddr && receiverBase58 != watchedAddr {
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Str("receiver", receiverBase58).
+		Str("resourceType", details.ResourceType).
+		Int64("amount", details.Amount).
+		Msg("Undelegate operation detected")
+
+	event := &webhook.OperationEvent{
+		EventType:       "undelegate_resource",
+		EventID:         fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:       time.Now().Unix(),
+		Network:         r.network,
+		TxHash:          req.Event.TransactionID,
+		BlockNumber:     req.Event.BlockNumber,
+		BlockTimestamp:  req.Event.BlockTimestamp,
+		Success:         req.Event.Success,
+		OperationType:   "UNDELEGATE",
+		OwnerAddress:    ownerBase58,
+		ReceiverAddress: receiverBase58,
+		ResourceType:    details.ResourceType,
+		ResourceAmount:  details.Amount,
+		WalletType:      req.Subscription.WalletType,
+		WatchedAddress:  watchedAddr,
+		SubscriptionID:  req.Subscription.SubscriptionID,
+		UserID:          req.Subscription.UserID,
+		Label:           req.Subscription.Label,
+		Metadata:        req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send undelegate notification")
+	}
+}
+
+// handleVoteOperation handles VoteWitnessContract
+func (r *EventRouter) handleVoteOperation(req *RouteEventRequest) {
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		return
+	}
+
+	details := r.tronParser.ParseVoteDetails(contract)
+	if details == nil {
+		return
+	}
+
+	ownerBase58 := parser.HexToBase58(details.Owner)
+	watchedAddr := req.Subscription.Address
+
+	if ownerBase58 != watchedAddr {
+		return
+	}
+
+	r.logger.Info().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Int64("totalVotes", details.TotalVotes).
+		Int("voteCount", len(details.Votes)).
+		Msg("Vote operation detected")
+
+	// Convert vote entries
+	votes := make([]webhook.VoteEntry, 0, len(details.Votes))
+	for _, v := range details.Votes {
+		votes = append(votes, webhook.VoteEntry{
+			SRAddress: parser.HexToBase58(v.SRAddress),
+			VoteCount: v.VoteCount,
+		})
+	}
+
+	event := &webhook.OperationEvent{
+		EventType:      "vote_witness",
+		EventID:        fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:      time.Now().Unix(),
+		Network:        r.network,
+		TxHash:         req.Event.TransactionID,
+		BlockNumber:    req.Event.BlockNumber,
+		BlockTimestamp: req.Event.BlockTimestamp,
+		Success:        req.Event.Success,
+		OperationType:  "VOTE",
+		OwnerAddress:   ownerBase58,
+		Votes:          votes,
+		TotalVotes:     details.TotalVotes,
+		WalletType:     req.Subscription.WalletType,
+		WatchedAddress: watchedAddr,
+		SubscriptionID: req.Subscription.SubscriptionID,
+		UserID:         req.Subscription.UserID,
+		Label:          req.Subscription.Label,
+		Metadata:       req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send vote notification")
+	}
+}
+
+// handlePermissionOperation handles AccountPermissionUpdateContract
+// CRITICAL: This triggers security alerts
+func (r *EventRouter) handlePermissionOperation(req *RouteEventRequest) {
+	contract := r.getContractFromEvent(req.Event)
+	if contract == nil {
+		return
+	}
+
+	details := r.tronParser.ParsePermissionDetails(contract)
+	if details == nil {
+		return
+	}
+
+	ownerBase58 := parser.HexToBase58(details.Owner)
+	watchedAddr := req.Subscription.Address
+
+	if ownerBase58 != watchedAddr {
+		return
+	}
+
+	// CRITICAL LOG - Permission change on watched wallet
+	r.logger.Warn().
+		Str("txHash", req.Event.TransactionID).
+		Str("owner", ownerBase58).
+		Str("walletType", req.Subscription.WalletType).
+		Msg("⚠️ CRITICAL: Permission change detected on watched wallet!")
+
+	// Convert permission details
+	var permChanges *webhook.PermissionChangeInfo
+	if details.OwnerPermission != nil || len(details.ActivePermission) > 0 {
+		permChanges = &webhook.PermissionChangeInfo{}
+
+		if details.OwnerPermission != nil {
+			permChanges.OwnerPermission = &webhook.PermissionInfo{
+				Name:      details.OwnerPermission.Name,
+				Threshold: details.OwnerPermission.Threshold,
+				Keys:      make([]webhook.KeyInfo, 0, len(details.OwnerPermission.Keys)),
+			}
+			for _, k := range details.OwnerPermission.Keys {
+				permChanges.OwnerPermission.Keys = append(permChanges.OwnerPermission.Keys, webhook.KeyInfo{
+					Address: parser.HexToBase58(k.Address),
+					Weight:  k.Weight,
+				})
+			}
+		}
+
+		for _, active := range details.ActivePermission {
+			permInfo := &webhook.PermissionInfo{
+				Name:      active.Name,
+				Threshold: active.Threshold,
+				Keys:      make([]webhook.KeyInfo, 0, len(active.Keys)),
+			}
+			for _, k := range active.Keys {
+				permInfo.Keys = append(permInfo.Keys, webhook.KeyInfo{
+					Address: parser.HexToBase58(k.Address),
+					Weight:  k.Weight,
+				})
+			}
+			permChanges.ActivePermission = append(permChanges.ActivePermission, permInfo)
+		}
+	}
+
+	event := &webhook.OperationEvent{
+		EventType:         "permission_update",
+		EventID:           fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
+		Timestamp:         time.Now().Unix(),
+		Network:           r.network,
+		TxHash:            req.Event.TransactionID,
+		BlockNumber:       req.Event.BlockNumber,
+		BlockTimestamp:    req.Event.BlockTimestamp,
+		Success:           req.Event.Success,
+		OperationType:     "PERMISSION",
+		OwnerAddress:      ownerBase58,
+		PermissionChanges: permChanges,
+		Priority:          "HIGH", // Mark as high priority for immediate alerting
+		WalletType:        req.Subscription.WalletType,
+		WatchedAddress:    watchedAddr,
+		SubscriptionID:    req.Subscription.SubscriptionID,
+		UserID:            req.Subscription.UserID,
+		Label:             req.Subscription.Label,
+		Metadata:          req.Subscription.Metadata,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
+		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("CRITICAL: Failed to send permission change notification!")
+	} else {
+		r.logger.Info().Str("txHash", event.TxHash).Msg("Permission change notification sent to Porto API")
+	}
 }
 
 // getTokenInfo returns token symbol and decimals for known contracts
