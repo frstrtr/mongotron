@@ -20,6 +20,10 @@ const (
 	WalletTypePlatform WalletType = "platform"
 	// WalletTypeGeneral represents general/unspecified wallets
 	WalletTypeGeneral WalletType = "general"
+	// WalletTypeGasStation represents gas station pool wallets
+	WalletTypeGasStation WalletType = "gasstation"
+	// WalletTypeInvoice represents invoice payment wallets
+	WalletTypeInvoice WalletType = "invoice"
 )
 
 // WatchListHandler handles watch list management for USDT/TRC20 monitoring
@@ -299,7 +303,7 @@ func contains(slice []string, item string) bool {
 // isValidWalletType checks if the wallet type is valid
 func isValidWalletType(wt WalletType) bool {
 	switch wt {
-	case WalletTypeNPS, WalletTypePortal, WalletTypeExchange, WalletTypePlatform, WalletTypeGeneral:
+	case WalletTypeNPS, WalletTypePortal, WalletTypeExchange, WalletTypePlatform, WalletTypeGeneral, WalletTypeGasStation, WalletTypeInvoice:
 		return true
 	}
 	return false
