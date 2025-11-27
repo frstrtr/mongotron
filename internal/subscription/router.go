@@ -1022,9 +1022,16 @@ func (r *EventRouter) handleClaimRewardsOperation(req *RouteEventRequest) {
 		return
 	}
 
+	// Extract claimed amount from transaction result (not in contract params)
+	var claimedAmount int64
+	if req.Event.RawTxInfo != nil {
+		claimedAmount = req.Event.RawTxInfo.GetWithdrawAmount()
+	}
+
 	r.logger.Info().
 		Str("txHash", req.Event.TransactionID).
 		Str("owner", ownerBase58).
+		Int64("claimedAmount", claimedAmount).
 		Msg("Claim rewards operation detected")
 
 	event := &webhook.OperationEvent{
@@ -1038,6 +1045,7 @@ func (r *EventRouter) handleClaimRewardsOperation(req *RouteEventRequest) {
 		Success:        req.Event.Success,
 		OperationType:  "CLAIM",
 		OwnerAddress:   ownerBase58,
+		ResourceAmount: claimedAmount, // Claimed TRX amount in SUN
 		WalletType:     req.Subscription.WalletType,
 		WatchedAddress: watchedAddr,
 		SubscriptionID: req.Subscription.SubscriptionID,
@@ -1052,7 +1060,10 @@ func (r *EventRouter) handleClaimRewardsOperation(req *RouteEventRequest) {
 	if err := r.portoClient.SendOperationNotification(ctx, event); err != nil {
 		r.logger.Error().Err(err).Str("txHash", event.TxHash).Msg("Failed to send claim rewards notification")
 	} else {
-		r.logger.Info().Str("txHash", event.TxHash).Msg("Claim rewards notification sent to Porto API")
+		r.logger.Info().
+			Str("txHash", event.TxHash).
+			Int64("claimedAmount", claimedAmount).
+			Msg("Claim rewards notification sent to Porto API")
 	}
 }
 
