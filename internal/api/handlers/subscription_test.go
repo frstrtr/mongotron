@@ -201,7 +201,9 @@ func TestCreateSubscription_MissingAddress(t *testing.T) {
 	var response ErrorResponse
 	json.Unmarshal(body, &response)
 
-	assert.Equal(t, "invalid_address", response.Error)
+	// An empty address is allowed only with a contract-type filter (monitor-all mode),
+	// so a bare empty address is rejected as an invalid request.
+	assert.Equal(t, "invalid_request", response.Error)
 }
 
 func TestGetSubscription_Success(t *testing.T) {

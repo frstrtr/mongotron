@@ -139,7 +139,7 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 	if !isValidWalletType(req.WalletType) {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
 			Error:   "invalid_wallet_type",
-			Message: "Invalid wallet type. Must be one of: platform, nps, portal, exchange, general",
+			Message: "Invalid wallet type. Must be one of: platform, nps, portal, exchange, gasstation, invoice, general",
 		})
 	}
 

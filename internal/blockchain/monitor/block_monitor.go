@@ -322,7 +322,7 @@ func (m *BlockMonitor) extractTransactionData(ctx context.Context, block *core.B
 		TxHash:         txID,
 		RawTransaction: tx,
 		RawTxInfo:      txInfo,
-		Success:        true,
+		Success:        false, // set from txInfo below; unknown is not success
 		ContractData:   make(map[string]interface{}),
 	}
 
@@ -358,7 +358,7 @@ func (m *BlockMonitor) extractTransactionData(ctx context.Context, block *core.B
 
 	// Extract transaction info details
 	if txInfo != nil {
-		txData.Success = txInfo.GetResult() == core.TransactionInfo_SUCESS
+		txData.Success = TxInfoSucceeded(txInfo)
 
 		// Extract logs
 		if len(txInfo.GetLog()) > 0 {

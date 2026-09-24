@@ -313,17 +313,14 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 		return nil, fmt.Errorf("failed to calculate transaction ID")
 	}
 
-	// Get transaction info (includes events, logs, receipt)
-	ctx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
-	defer cancel()
-
-	txInfo, err := m.client.GetTransactionInfoById(ctx, txID)
+	// Get transaction info (includes events, logs, receipt). Without it the transaction's outcome
+	// is unknown: the event is still delivered, but with Success=false (never assumed true).
+	txInfo, err := fetchTxInfo(m.ctx, m.client, txID, txInfoAttempts, txInfoRetryDelay, txInfoTimeout)
 	if err != nil {
 		m.logger.Warn().
 			Err(err).
 			Str("txID", txID).
-			Msg("Failed to get transaction info, using basic data")
-		// Continue with basic transaction data
+			Msg("Failed to get transaction info: event delivered with success=false (outcome not verified)")
 		txInfo = nil
 	}
 
@@ -332,7 +329,7 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 		TransactionHash: txID,
 		RawTransaction:  tx,
 		RawTxInfo:       txInfo,
-		Success:         true,
+		Success:         false,
 		EventData:       make(map[string]interface{}),
 	}
 
@@ -365,7 +362,7 @@ func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (
 
 	// Extract transaction result from txInfo
 	if txInfo != nil {
-		event.Success = txInfo.GetResult() == core.TransactionInfo_SUCESS
+		event.Success = TxInfoSucceeded(txInfo)
 
 		// Extract contract events/logs
 		if len(txInfo.GetLog()) > 0 {

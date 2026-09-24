@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"sync"
 	"time"
@@ -26,10 +27,13 @@ type EventRouter struct {
 	eventQueue    chan *RouteEventRequest
 	webhookClient *http.Client
 	portoClient   *webhook.PortoAPIClient
-	trc20Parser   *parser.TRC20Parser
-	tronParser    *parser.TronParser
-	network       string // "tron-mainnet" or "tron-nile"
-	mu            sync.RWMutex
+	// subscriptionSecret signs generic per-subscription webhook posts (HMAC-SHA256,
+	// same headers as the Porto client). Empty = posts are sent unsigned.
+	subscriptionSecret string
+	trc20Parser        *parser.TRC20Parser
+	tronParser         *parser.TronParser
+	network            string // "tron-mainnet" or "tron-nile"
+	mu                 sync.RWMutex
 }
 
 // RouteEventRequest contains event routing information
@@ -65,6 +69,11 @@ func NewEventRouter(db *storage.Database, log *logger.Logger) *EventRouter {
 // SetPortoClient sets the Porto API client for webhook notifications
 func (r *EventRouter) SetPortoClient(client *webhook.PortoAPIClient) {
 	r.portoClient = client
+}
+
+// SetSubscriptionSecret sets the HMAC secret used to sign per-subscription webhook posts.
+func (r *EventRouter) SetSubscriptionSecret(secret string) {
+	r.subscriptionSecret = secret
 }
 
 // SetNetwork sets the network name (tron-mainnet or tron-nile)
@@ -118,9 +127,17 @@ func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 	// Route to WebSocket clients
 	r.sendToWebSocketClients(req.Subscription.SubscriptionID, eventData)
 
-	// Route to webhook if configured
-	if req.Subscription.WebhookURL != "" {
+	// Route to the subscription's own webhook if configured. Porto API endpoints are
+	// skipped: they only accept the signed, Porto-shaped events the Porto client sends
+	// below, so a raw AddressEvent post there is always rejected (and would be a second,
+	// redundant delivery of the same transaction).
+	if shouldSendSubscriptionWebhook(req.Subscription) {
 		go r.sendToWebhook(req.Subscription, eventData)
+	} else if req.Subscription.WebhookURL != "" {
+		r.logger.Debug().
+			Str("subscriptionId", req.Subscription.SubscriptionID).
+			Str("webhookUrl", req.Subscription.WebhookURL).
+			Msg("Skipping per-subscription webhook: Porto API endpoint is served by the signed Porto client")
 	}
 
 	// Route to Porto API based on contract type
@@ -234,18 +251,10 @@ func (r *EventRouter) handleTRC20Transfer(req *RouteEventRequest) {
 		transfer.From = parser.HexToBase58(from)
 	}
 
-	// Extract amount - handle both string and numeric types
-	if amountVal := params["amount"]; amountVal != nil {
-		switch v := amountVal.(type) {
-		case string:
-			transfer.AmountDecimal = r.formatAmount(v, transfer.TokenDecimals)
-		case float64:
-			transfer.AmountDecimal = r.formatAmount(fmt.Sprintf("%.0f", v), transfer.TokenDecimals)
-		case int64:
-			transfer.AmountDecimal = r.formatAmount(fmt.Sprintf("%d", v), transfer.TokenDecimals)
-		case int:
-			transfer.AmountDecimal = r.formatAmount(fmt.Sprintf("%d", v), transfer.TokenDecimals)
-		}
+	// Extract the raw amount (string or numeric) into both Amount and AmountDecimal
+	if amount, ok := parseRawAmount(params["amount"]); ok {
+		transfer.Amount = amount
+		transfer.AmountDecimal = r.formatAmount(amount.String(), transfer.TokenDecimals)
 	}
 
 	// For transfer() method, From is the transaction sender (owner_address)
@@ -1075,6 +1084,51 @@ func (r *EventRouter) getTokenInfo(contractAddress string) (string, int) {
 	return "TRC20", 18 // Default
 }
 
+// parseRawAmount converts a decoded ABI amount (decimal string, *big.Int or number)
+// to a non-negative big.Int.
+func parseRawAmount(v interface{}) (*big.Int, bool) {
+	var n *big.Int
+	switch t := v.(type) {
+	case nil:
+		return nil, false
+	case *big.Int:
+		if t == nil {
+			return nil, false
+		}
+		n = new(big.Int).Set(t)
+	case string:
+		var ok bool
+		if n, ok = new(big.Int).SetString(t, 10); !ok {
+			return nil, false
+		}
+	case float64:
+		n, _ = big.NewFloat(t).Int(nil)
+	case int64:
+		n = big.NewInt(t)
+	case int:
+		n = big.NewInt(int64(t))
+	case uint64:
+		n = new(big.Int).SetUint64(t)
+	case json.Number:
+		var ok bool
+		if n, ok = new(big.Int).SetString(t.String(), 10); !ok {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	if n.Sign() < 0 {
+		return nil, false
+	}
+	return n, true
+}
+
+// shouldSendSubscriptionWebhook reports whether the subscription's own webhook URL
+// should receive the raw event. Porto API endpoints never should (see routeEvent).
+func shouldSendSubscriptionWebhook(sub *models.Subscription) bool {
+	return sub != nil && sub.WebhookURL != "" && !webhook.IsPortoWebhookURL(sub.WebhookURL)
+}
+
 // formatAmount formats raw amount string with decimals
 func (r *EventRouter) formatAmount(amountStr string, decimals int) string {
 	// Simple formatting - for production use big.Int
@@ -1136,6 +1190,8 @@ func (r *EventRouter) sendToWebhook(sub *models.Subscription, eventData []byte) 
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Subscription-ID", sub.SubscriptionID)
 		req.Header.Set("X-MongoTron-Event", "address.transaction")
+		// Signed with a fresh timestamp per attempt (no-op without a subscription secret).
+		webhook.SetSignatureHeaders(req.Header, r.subscriptionSecret, eventData, time.Now())
 
 		resp, err := r.webhookClient.Do(req)
 		if err != nil {

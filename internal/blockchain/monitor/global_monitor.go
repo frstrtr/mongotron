@@ -277,7 +277,7 @@ func (m *GlobalMonitor) extractEvent(block *core.Block, tx *core.Transaction) (*
 		TransactionHash: txID,
 		RawTransaction:  tx,
 		RawTxInfo:       txInfo,
-		Success:         true,
+		Success:         TxInfoSucceeded(txInfo),
 		EventData:       make(map[string]interface{}),
 	}
 
@@ -309,7 +309,7 @@ func (m *GlobalMonitor) extractEvent(block *core.Block, tx *core.Transaction) (*
 	}
 
 	// Extract transaction result from txInfo
-	event.Success = txInfo.GetResult() == core.TransactionInfo_SUCESS
+	event.Success = TxInfoSucceeded(txInfo)
 
 	return event, nil
 }

@@ -1,8 +1,12 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fbsobreira/gotron-sdk/pkg/proto/api"
@@ -142,15 +146,44 @@ func extractTransactionsFromExt(txExts []*api.TransactionExtention) []*core.Tran
 	return txs
 }
 
-// GetTransactionInfoById retrieves transaction details including events and logs
-func (c *TronClient) GetTransactionInfoById(ctx context.Context, txID string) (*core.TransactionInfo, error) {
-	req := &api.BytesMessage{
-		Value: []byte(txID),
+// ErrTransactionInfoNotFound is returned when the node has no execution info for a transaction
+// (unknown id, or not in a block on this node yet).
+var ErrTransactionInfoNotFound = errors.New("transaction info not found")
+
+// TxIDBytes decodes a hex transaction id (as CalculateTransactionID returns it, optionally
+// 0x-prefixed) into the 32 raw bytes the node's BytesMessage expects. Sending the ASCII of the
+// hex string instead makes the node look up a 64-byte key that never exists: it answers with an
+// EMPTY TransactionInfo, whose zero-value result reads as SUCESS.
+func TxIDBytes(txID string) ([]byte, error) {
+	s := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(txID), "0x"), "0X")
+	id, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid transaction id %q: %w", txID, err)
 	}
-	
+	if len(id) != 32 {
+		return nil, fmt.Errorf("invalid transaction id %q: %d bytes, want 32", txID, len(id))
+	}
+	return id, nil
+}
+
+// GetTransactionInfoById retrieves transaction details including events and logs.
+// It returns ErrTransactionInfoNotFound (wrapped) unless the node's reply is for this very
+// transaction, so an empty reply can never be mistaken for a successful execution.
+func (c *TronClient) GetTransactionInfoById(ctx context.Context, txID string) (*core.TransactionInfo, error) {
+	id, err := TxIDBytes(txID)
+	if err != nil {
+		return nil, err
+	}
+	req := &api.BytesMessage{
+		Value: id,
+	}
+
 	txInfo, err := c.walletClient.GetTransactionInfoById(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get transaction info for %s: %w", txID, err)
+	}
+	if txInfo == nil || !bytes.Equal(txInfo.GetId(), id) {
+		return nil, fmt.Errorf("%w: %s", ErrTransactionInfoNotFound, txID)
 	}
 
 	return txInfo, nil
@@ -158,8 +191,12 @@ func (c *TronClient) GetTransactionInfoById(ctx context.Context, txID string) (*
 
 // GetTransactionById retrieves transaction by ID
 func (c *TronClient) GetTransactionById(ctx context.Context, txID string) (*core.Transaction, error) {
+	id, err := TxIDBytes(txID)
+	if err != nil {
+		return nil, err
+	}
 	req := &api.BytesMessage{
-		Value: []byte(txID),
+		Value: id,
 	}
 	
 	tx, err := c.walletClient.GetTransactionById(ctx, req)
