@@ -37,6 +37,7 @@ func main() {
 	// Initialize logger
 	log := logger.New(cfg.Logging)
 	log.Info().Str("version", version).Msg("Starting MongoTron API Server")
+	log.Info().Str("configFile", cfg.ConfigFile).Str("database", cfg.Database.MongoDB.Database).Msg("Configuration loaded")
 
 	// Initialize database
 	dbCfg := storage.Config{
@@ -79,6 +80,9 @@ func main() {
 	}
 	defer manager.Stop()
 
+	// Per-subscription webhook posts are signed when a subscription secret is configured
+	manager.GetEventRouter().SetSubscriptionSecret(cfg.Webhooks.SubscriptionSecret)
+
 	// Configure Porto API client if enabled
 	if cfg.Webhooks.Porto.Enabled {
 		portoClient := webhook.NewPortoAPIClient(
@@ -88,12 +92,21 @@ func main() {
 			cfg.Webhooks.Porto.Network,
 			&log,
 		)
+		portoClient.SetOperationPath(cfg.Webhooks.Porto.OperationPath)
 		manager.GetEventRouter().SetPortoClient(portoClient)
 		manager.GetEventRouter().SetNetwork(cfg.Webhooks.Porto.Network)
+		if cfg.Webhooks.Porto.Network == "" {
+			log.Error().Msg("Porto API webhook integration enabled but webhooks.porto.network is empty (tron-mainnet or tron-nile): PortoAPI ignores events without a network")
+		}
+		if cfg.Webhooks.Porto.BaseURL == "" {
+			log.Error().Msg("Porto API webhook integration enabled but webhooks.porto.baseUrl is empty (set PORTO_API_URL): transfer events will NOT be delivered")
+		}
 		log.Info().
 			Str("portoUrl", cfg.Webhooks.Porto.BaseURL).
-			Str("webhookPath", cfg.Webhooks.Porto.WebhookPath).
+			Str("transferUrl", portoClient.TransferURL()).
+			Str("operationUrl", portoClient.OperationURL()).
 			Str("network", cfg.Webhooks.Porto.Network).
+			Bool("signed", cfg.Webhooks.Porto.WebhookSecret != "").
 			Msg("Porto API webhook integration enabled")
 	}
 
