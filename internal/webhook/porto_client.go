@@ -8,7 +8,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/frstrtr/mongotron/internal/blockchain/parser"
@@ -19,10 +23,12 @@ import (
 type PortoAPIClient struct {
 	baseURL       string
 	webhookPath   string
+	operationPath string
 	webhookSecret string
 	network       string
 	httpClient    *http.Client
 	logger        *logger.Logger
+	retryDelay    time.Duration // base backoff between attempts (attempt n waits n*retryDelay)
 }
 
 // TransferEvent represents any type of transfer event for Porto API
@@ -141,6 +147,75 @@ type KeyInfo struct {
 	Weight  int64  `json:"weight"`
 }
 
+// Webhook path and header constants shared by the Porto client and the
+// per-subscription webhook sender.
+const (
+	// DefaultTransferPath is the Porto API endpoint for transfer events.
+	DefaultTransferPath = "/v1/webhooks/mongotron/transfer"
+	// DefaultOperationPath is the Porto API endpoint for gas station operation events.
+	DefaultOperationPath = "/v1/webhooks/mongotron/operation"
+	// PortoWebhookPathPrefix identifies Porto API webhook endpoints. These only accept
+	// Porto-shaped, signed payloads (TransferEvent/OperationEvent) delivered by this client.
+	PortoWebhookPathPrefix = "/v1/webhooks/mongotron/"
+
+	// HeaderSignature carries hex HMAC-SHA256(secret, body) (v1, kept for compatibility).
+	HeaderSignature = "X-MongoTron-Signature"
+	// HeaderSignatureV2 carries hex HMAC-SHA256(secret, timestamp + "." + body), which binds
+	// the timestamp so a receiver can reject replays of old deliveries.
+	HeaderSignatureV2 = "X-MongoTron-Signature-V2"
+	// HeaderTimestamp carries the Unix time (seconds) the delivery attempt was signed.
+	HeaderTimestamp = "X-MongoTron-Timestamp"
+
+	maxDeliveryAttempts = 3
+)
+
+// Sign returns the v1 signature: hex HMAC-SHA256(secret, body).
+// It returns "" when secret is empty.
+func Sign(secret string, body []byte) string {
+	if secret == "" {
+		return ""
+	}
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write(body)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// SignV2 returns the v2 signature: hex HMAC-SHA256(secret, timestamp + "." + body).
+// It returns "" when secret is empty.
+func SignV2(secret, timestamp string, body []byte) string {
+	if secret == "" {
+		return ""
+	}
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(timestamp))
+	h.Write([]byte("."))
+	h.Write(body)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// SetSignatureHeaders signs body with secret and sets the v1, v2 and timestamp headers.
+// With an empty secret no signature headers are set (receivers must reject the request).
+func SetSignatureHeaders(h http.Header, secret string, body []byte, now time.Time) {
+	if secret == "" {
+		return
+	}
+	ts := strconv.FormatInt(now.Unix(), 10)
+	h.Set(HeaderSignature, Sign(secret, body))
+	h.Set(HeaderSignatureV2, SignV2(secret, ts, body))
+	h.Set(HeaderTimestamp, ts)
+}
+
+// IsPortoWebhookURL reports whether rawURL points at a Porto API MongoTron webhook
+// endpoint (any path containing /v1/webhooks/mongotron/). Such endpoints are served by
+// the signed Porto client, so a raw per-subscription post to them is never accepted.
+func IsPortoWebhookURL(rawURL string) bool {
+	p := rawURL
+	if u, err := url.Parse(strings.TrimSpace(rawURL)); err == nil && u.Path != "" {
+		p = u.Path
+	}
+	return strings.Contains(p, PortoWebhookPathPrefix)
+}
+
 // NewPortoAPIClient creates a new Porto API webhook client
 func NewPortoAPIClient(baseURL, webhookPath, webhookSecret, network string, log *logger.Logger) *PortoAPIClient {
 	if log == nil {
@@ -150,57 +225,66 @@ func NewPortoAPIClient(baseURL, webhookPath, webhookSecret, network string, log 
 
 	// Default webhook path if not specified
 	if webhookPath == "" {
-		webhookPath = "/v1/webhooks/mongotron/transfer"
+		webhookPath = DefaultTransferPath
+	}
+
+	if webhookSecret == "" {
+		log.Error().Msg("Porto webhook secret is empty: deliveries will be UNSIGNED and Porto API will reject them (set webhooks.porto.webhookSecret / MONGOTRON_WEBHOOK_SECRET)")
 	}
 
 	return &PortoAPIClient{
-		baseURL:       baseURL,
-		webhookPath:   webhookPath,
+		baseURL:       strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		webhookPath:   ensureLeadingSlash(webhookPath),
+		operationPath: DefaultOperationPath,
 		webhookSecret: webhookSecret,
 		network:       network,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		logger: log,
+		logger:     log,
+		retryDelay: time.Second,
 	}
 }
 
-// SendTransferNotification sends a TRC20 transfer notification to Porto API
-func (c *PortoAPIClient) SendTransferNotification(ctx context.Context, event *PortoTransferEvent) error {
-	if c.baseURL == "" {
-		c.logger.Warn().Msg("Porto API URL not configured, skipping webhook")
-		return nil
+// SetOperationPath overrides the path operation events are posted to
+// (default /v1/webhooks/mongotron/operation). An empty path keeps the default.
+func (c *PortoAPIClient) SetOperationPath(p string) {
+	if strings.TrimSpace(p) != "" {
+		c.operationPath = ensureLeadingSlash(strings.TrimSpace(p))
 	}
+}
 
-	// Marshal event to JSON
-	payload, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("failed to marshal event: %w", err)
+// TransferURL returns the full URL transfer events are posted to.
+func (c *PortoAPIClient) TransferURL() string { return c.baseURL + c.webhookPath }
+
+// OperationURL returns the full URL operation events are posted to.
+func (c *PortoAPIClient) OperationURL() string { return c.baseURL + c.operationPath }
+
+func ensureLeadingSlash(p string) string {
+	if p != "" && !strings.HasPrefix(p, "/") {
+		return "/" + p
 	}
+	return p
+}
 
-	// Create webhook URL using configured path
-	webhookURL := c.baseURL + c.webhookPath
-
-	// Pre-compute signature and headers (before retry loop)
-	signature := c.signPayload(payload)
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
-	subscriptionID := event.SubscriptionID
-
-	// Send request with retries
+// deliver POSTs payload to webhookURL with up to maxDeliveryAttempts attempts.
+// Every attempt is signed with a fresh timestamp. 4xx responses other than 408/429
+// are not retried: the receiver rejected the request itself and will do so again.
+func (c *PortoAPIClient) deliver(ctx context.Context, webhookURL string, payload []byte, headers map[string]string) error {
 	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
+	for attempt := 1; attempt <= maxDeliveryAttempts; attempt++ {
 		// Create fresh request for each attempt (body reader must be fresh)
-		req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(payload))
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
-
-		// Set headers
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-MongoTron-Event", "trc20_transfer")
-		req.Header.Set("X-MongoTron-Signature", signature)
-		req.Header.Set("X-MongoTron-Timestamp", timestamp)
-		req.Header.Set("X-Subscription-ID", subscriptionID)
+		for k, v := range headers {
+			if v != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		SetSignatureHeaders(req.Header, c.webhookSecret, payload, time.Now())
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -210,44 +294,68 @@ func (c *PortoAPIClient) SendTransferNotification(ctx context.Context, event *Po
 				Int("attempt", attempt).
 				Str("url", webhookURL).
 				Msg("Webhook delivery failed, retrying...")
-			time.Sleep(time.Duration(attempt) * time.Second)
-			continue
+		} else {
+			// Drain and close inside the loop (a deferred close would hold every
+			// attempt's connection until the whole delivery returns).
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+			resp.Body.Close()
+
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return nil
+			}
+			lastErr = fmt.Errorf("webhook returned status %d", resp.StatusCode)
+			c.logger.Warn().
+				Int("status", resp.StatusCode).
+				Int("attempt", attempt).
+				Str("url", webhookURL).
+				Msg("Webhook returned non-2xx status")
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 &&
+				resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests {
+				return fmt.Errorf("webhook rejected (not retried): %w", lastErr)
+			}
 		}
-		defer resp.Body.Close()
 
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			c.logger.Info().
-				Str("eventId", event.EventID).
-				Str("txHash", event.TxHash).
-				Str("to", event.To).
-				Str("amount", event.AmountDecimal).
-				Msg("Transfer notification sent to Porto API")
-			return nil
-		}
-
-		lastErr = fmt.Errorf("webhook returned status %d", resp.StatusCode)
-		c.logger.Warn().
-			Int("status", resp.StatusCode).
-			Int("attempt", attempt).
-			Msg("Webhook returned non-2xx status")
-
-		if attempt < 3 {
-			time.Sleep(time.Duration(attempt) * time.Second)
+		if attempt < maxDeliveryAttempts {
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("webhook delivery cancelled: %w (last error: %v)", ctx.Err(), lastErr)
+			case <-time.After(time.Duration(attempt) * c.retryDelay):
+			}
 		}
 	}
-
-	return fmt.Errorf("failed to deliver webhook after 3 attempts: %w", lastErr)
+	return fmt.Errorf("failed to deliver webhook after %d attempts: %w", maxDeliveryAttempts, lastErr)
 }
 
-// signPayload creates HMAC-SHA256 signature of the payload
-func (c *PortoAPIClient) signPayload(payload []byte) string {
-	if c.webhookSecret == "" {
-		return ""
+// SendTransferNotification sends a transfer notification (TRX/TRC10/TRC20) to Porto API
+func (c *PortoAPIClient) SendTransferNotification(ctx context.Context, event *PortoTransferEvent) error {
+	if c.baseURL == "" {
+		c.logger.Warn().Msg("Porto API URL not configured, skipping webhook")
+		return nil
 	}
 
-	h := hmac.New(sha256.New, []byte(c.webhookSecret))
-	h.Write(payload)
-	return hex.EncodeToString(h.Sum(nil))
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	eventHeader := event.EventType
+	if eventHeader == "" {
+		eventHeader = "trc20_transfer"
+	}
+	if err := c.deliver(ctx, c.TransferURL(), payload, map[string]string{
+		"X-MongoTron-Event": eventHeader,
+		"X-Subscription-ID": event.SubscriptionID,
+	}); err != nil {
+		return err
+	}
+
+	c.logger.Info().
+		Str("eventId", event.EventID).
+		Str("txHash", event.TxHash).
+		Str("to", event.To).
+		Str("amount", event.AmountDecimal).
+		Msg("Transfer notification sent to Porto API")
+	return nil
 }
 
 // SendOperationNotification sends a gas station operation notification to Porto API
@@ -257,76 +365,27 @@ func (c *PortoAPIClient) SendOperationNotification(ctx context.Context, event *O
 		return nil
 	}
 
-	// Marshal event to JSON
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("failed to marshal operation event: %w", err)
 	}
 
-	// Use operation-specific webhook path
-	webhookURL := c.baseURL + "/v1/webhooks/mongotron/operation"
-
-	// Pre-compute signature and headers
-	signature := c.signPayload(payload)
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
-	subscriptionID := event.SubscriptionID
-
-	// Send request with retries
-	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
-		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
-		}
-
-		// Set headers
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-MongoTron-Event", event.EventType)
-		req.Header.Set("X-MongoTron-Operation", event.OperationType)
-		req.Header.Set("X-MongoTron-Signature", signature)
-		req.Header.Set("X-MongoTron-Timestamp", timestamp)
-		req.Header.Set("X-Subscription-ID", subscriptionID)
-		if event.Priority != "" {
-			req.Header.Set("X-MongoTron-Priority", event.Priority)
-		}
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = err
-			c.logger.Warn().
-				Err(err).
-				Int("attempt", attempt).
-				Str("url", webhookURL).
-				Str("operation", event.OperationType).
-				Msg("Operation webhook delivery failed, retrying...")
-			time.Sleep(time.Duration(attempt) * time.Second)
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			c.logger.Info().
-				Str("eventId", event.EventID).
-				Str("txHash", event.TxHash).
-				Str("operation", event.OperationType).
-				Str("owner", event.OwnerAddress).
-				Msg("Operation notification sent to Porto API")
-			return nil
-		}
-
-		lastErr = fmt.Errorf("webhook returned status %d", resp.StatusCode)
-		c.logger.Warn().
-			Int("status", resp.StatusCode).
-			Int("attempt", attempt).
-			Str("operation", event.OperationType).
-			Msg("Operation webhook returned non-2xx status")
-
-		if attempt < 3 {
-			time.Sleep(time.Duration(attempt) * time.Second)
-		}
+	if err := c.deliver(ctx, c.OperationURL(), payload, map[string]string{
+		"X-MongoTron-Event":     event.EventType,
+		"X-MongoTron-Operation": event.OperationType,
+		"X-Subscription-ID":     event.SubscriptionID,
+		"X-MongoTron-Priority":  event.Priority,
+	}); err != nil {
+		return fmt.Errorf("operation %s: %w", event.OperationType, err)
 	}
 
-	return fmt.Errorf("failed to deliver operation webhook after 3 attempts: %w", lastErr)
+	c.logger.Info().
+		Str("eventId", event.EventID).
+		Str("txHash", event.TxHash).
+		Str("operation", event.OperationType).
+		Str("owner", event.OwnerAddress).
+		Msg("Operation notification sent to Porto API")
+	return nil
 }
 
 // CreateTRC20TransferEvent creates a TransferEvent from a TRC20Transfer

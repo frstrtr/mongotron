@@ -51,12 +51,20 @@ webhooks:
     timeout: 30s
     max_concurrent: 100
     retry_attempts: 3
+  # Signs per-subscription webhook posts to non-Porto consumers (same headers as the Porto client)
+  subscriptionSecret: "${MONGOTRON_SUBSCRIPTION_WEBHOOK_SECRET}"
   # Porto API Integration for USDT/TRC20 transfer monitoring
   porto:
     enabled: true
-    baseUrl: "${PORTO_API_URL:http://oplex7020:8000}"
+    # Porto API base URL, e.g. PORTO_API_URL=http://192.168.100.3:8000 (use an IP or a name
+    # this host can resolve). Unset = transfer events are not delivered (logged at startup).
+    baseUrl: "${PORTO_API_URL}"
     webhookPath: "/v1/webhooks/mongotron/transfer"
-    webhookSecret: "${MONGOTRON_WEBHOOK_SECRET:default-secret-change-me}"
+    # HMAC-SHA256 secret shared with PortoAPI (MONGOTRON_WEBHOOK_SECRET there). Never commit it:
+    # set it in the service environment. Unset = unsigned posts, which PortoAPI rejects.
+    webhookSecret: "${MONGOTRON_WEBHOOK_SECRET}"
+    # Operation (gas station) events endpoint
+    operationPath: "/v1/webhooks/mongotron/operation"
     network: "tron-nile"
 
 api:

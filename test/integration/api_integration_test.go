@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -19,6 +20,17 @@ const (
 	baseURL = "http://localhost:8080"
 	apiPath = "/api/v1"
 )
+
+// TestMain skips the whole package unless MONGOTRON_INTEGRATION=1: every test here
+// needs a live API server on localhost:8080, so a plain `go test ./...` must not
+// depend on (or fail without) one.
+func TestMain(m *testing.M) {
+	if os.Getenv("MONGOTRON_INTEGRATION") != "1" {
+		fmt.Println("skipping API integration tests (set MONGOTRON_INTEGRATION=1 with a server on " + baseURL + ")")
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 // TestAPIIntegration_FullFlow tests the complete API flow
 // Note: This requires the API server to be running
@@ -332,7 +344,12 @@ func TestAPIIntegration_Concurrent(t *testing.T) {
 		results := make(chan error, 10)
 		for i := 0; i < 10; i++ {
 			go func() {
-				resp, err := http.Get(baseURL + apiPath + "/health")
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+apiPath+"/health", nil)
+				if err != nil {
+					results <- err
+					return
+				}
+				resp, err := http.DefaultClient.Do(req)
 				if err != nil {
 					results <- err
 					return
