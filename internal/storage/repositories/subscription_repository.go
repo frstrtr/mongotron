@@ -155,6 +155,44 @@ func (r *SubscriptionRepository) Update(ctx context.Context, subscription *model
 	return nil
 }
 
+// SubscriptionSettings holds the caller-controlled fields of a subscription that
+// can be changed in place without stopping its monitor.
+type SubscriptionSettings struct {
+	Filters    models.SubscriptionFilters
+	WalletType string
+	UserID     string
+	Label      string
+	Metadata   map[string]interface{}
+}
+
+// UpdateSettings replaces the filters, wallet type, user ID, label and metadata of an
+// ACTIVE subscription. Only those fields are written, so the counters and block
+// positions the running monitor maintains are never overwritten with stale values.
+// It fails when no active subscription with that ID exists.
+func (r *SubscriptionRepository) UpdateSettings(ctx context.Context, subscriptionID string, s SubscriptionSettings) error {
+	update := bson.M{
+		"$set": bson.M{
+			"filters":     s.Filters,
+			"wallet_type": s.WalletType,
+			"user_id":     s.UserID,
+			"label":       s.Label,
+			"metadata":    s.Metadata,
+			"updated_at":  time.Now(),
+		},
+	}
+
+	result, err := r.collection.UpdateOne(ctx, bson.M{"subscription_id": subscriptionID, "status": "active"}, update)
+	if err != nil {
+		return fmt.Errorf("failed to update subscription settings: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("active subscription not found")
+	}
+
+	return nil
+}
+
 // UpdateStatus updates subscription status
 func (r *SubscriptionRepository) UpdateStatus(ctx context.Context, id primitive.ObjectID, status string) error {
 	update := bson.M{
