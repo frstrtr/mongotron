@@ -10,6 +10,7 @@ import (
 	"github.com/frstrtr/mongotron/internal/blockchain/monitor"
 	"github.com/frstrtr/mongotron/internal/storage"
 	"github.com/frstrtr/mongotron/internal/storage/models"
+	"github.com/frstrtr/mongotron/internal/storage/repositories"
 	"github.com/frstrtr/mongotron/pkg/logger"
 	"github.com/google/uuid"
 )
@@ -22,7 +23,12 @@ type BlockchainMonitor interface {
 	GetLastBlockNumber() int64
 }
 
-// MonitorWrapper wraps a blockchain monitor with subscription info
+// MonitorWrapper wraps a blockchain monitor with subscription info.
+//
+// Subscription is an immutable snapshot: it is never modified in place once
+// published. Changes (settings updates, block progress) build a copy and swap the
+// pointer under mu, so the event loop, the router goroutines holding an older
+// snapshot and UpdateSubscription never race. Read it through current().
 type MonitorWrapper struct {
 	Monitor      BlockchainMonitor
 	Subscription *models.Subscription
@@ -30,6 +36,46 @@ type MonitorWrapper struct {
 	StopChan     chan struct{}
 	Stopped      bool
 	mu           sync.RWMutex
+}
+
+// current returns the subscription snapshot the monitor is applying right now.
+func (w *MonitorWrapper) current() *models.Subscription {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.Subscription
+}
+
+// swap publishes a modified copy of the current subscription snapshot and returns it.
+func (w *MonitorWrapper) swap(change func(next *models.Subscription)) *models.Subscription {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	next := *w.Subscription
+	change(&next)
+	w.Subscription = &next
+	return w.Subscription
+}
+
+// advanceCurrentBlock records block progress; it reports whether the block moved forward.
+func (w *MonitorWrapper) advanceCurrentBlock(block int64) bool {
+	advanced := false
+	w.swap(func(next *models.Subscription) {
+		if block > next.CurrentBlock {
+			next.CurrentBlock = block
+			advanced = true
+		}
+	})
+	return advanced
+}
+
+// applySettings makes the running monitor use the new settings from its next event on.
+func (w *MonitorWrapper) applySettings(upd SubscriptionUpdate) *models.Subscription {
+	return w.swap(func(next *models.Subscription) {
+		next.Filters = upd.Filters
+		next.WalletType = upd.WalletType
+		next.UserID = upd.UserID
+		next.Label = upd.Label
+		next.Metadata = upd.Metadata
+	})
 }
 
 // Manager manages active subscriptions and monitors
@@ -211,16 +257,17 @@ func (m *Manager) Unsubscribe(subscriptionID string) error {
 	}
 
 	// Get the last processed block from the monitor before stopping
+	sub := wrapper.current()
 	lastBlock := wrapper.Monitor.GetLastBlockNumber()
 	if lastBlock == 0 {
-		lastBlock = wrapper.Subscription.CurrentBlock
+		lastBlock = sub.CurrentBlock
 	}
 
 	// Stop the monitor
 	m.stopMonitorUnsafe(wrapper)
 
 	// Update database with status AND last seen block (for gap scanning on resubscribe)
-	if err := m.db.SubscriptionRepo.UpdateStatusWithBlock(m.ctx, wrapper.Subscription.ID, "stopped", lastBlock); err != nil {
+	if err := m.db.SubscriptionRepo.UpdateStatusWithBlock(m.ctx, sub.ID, "stopped", lastBlock); err != nil {
 		m.logger.Error().
 			Err(err).
 			Str("subscriptionId", subscriptionID).
@@ -340,6 +387,60 @@ func (m *Manager) Resubscribe(address string, webhookURL string, filters models.
 	}
 
 	return result, nil
+}
+
+// UpdateSubscription changes the filters, wallet type, user ID, label and metadata of
+// an active subscription in place: the stored row is updated and the running monitor
+// applies the new settings from its next event on. The monitor keeps running, so
+// there is no gap in coverage and no second subscription for the address. The
+// update is a full replacement of those five fields; the caller resolves which
+// values to keep. It fails when the subscription is not active.
+func (m *Manager) UpdateSubscription(subscriptionID string, upd SubscriptionUpdate) (*models.Subscription, error) {
+	sub, err := m.db.SubscriptionRepo.FindBySubscriptionID(m.ctx, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	if sub.Status != "active" {
+		return nil, fmt.Errorf("subscription %s is not active (status %q)", subscriptionID, sub.Status)
+	}
+
+	if err := m.db.SubscriptionRepo.UpdateSettings(m.ctx, subscriptionID, repositories.SubscriptionSettings{
+		Filters:    upd.Filters,
+		WalletType: upd.WalletType,
+		UserID:     upd.UserID,
+		Label:      upd.Label,
+		Metadata:   upd.Metadata,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to update subscription: %w", err)
+	}
+
+	m.mu.RLock()
+	wrapper, running := m.monitors[subscriptionID]
+	m.mu.RUnlock()
+	if running {
+		wrapper.applySettings(upd)
+	} else {
+		m.logger.Warn().
+			Str("subscriptionId", subscriptionID).
+			Msg("Subscription updated in storage but no running monitor was found; it applies on the next start")
+	}
+
+	sub.Filters = upd.Filters
+	sub.WalletType = upd.WalletType
+	sub.UserID = upd.UserID
+	sub.Label = upd.Label
+	sub.Metadata = upd.Metadata
+
+	m.logger.Info().
+		Str("subscriptionId", subscriptionID).
+		Str("address", sub.Address).
+		Strs("assetTypes", upd.Filters.AssetTypes).
+		Strs("contractTypes", upd.Filters.ContractTypes).
+		Str("walletType", upd.WalletType).
+		Bool("monitorRefreshed", running).
+		Msg("Subscription updated in place")
+
+	return sub, nil
 }
 
 // GetSubscription retrieves a subscription by ID
@@ -516,41 +617,44 @@ func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 			// Periodically update current block from monitor
 			if wrapper.Monitor != nil {
 				currentBlock := wrapper.Monitor.GetLastBlockNumber()
-				if currentBlock > wrapper.Subscription.CurrentBlock {
-					m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, wrapper.Subscription.SubscriptionID, currentBlock)
-					wrapper.Subscription.CurrentBlock = currentBlock
+				if wrapper.advanceCurrentBlock(currentBlock) {
+					subscriptionID := wrapper.current().SubscriptionID
+					m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, subscriptionID, currentBlock)
 					m.logger.Debug().
-						Str("subscriptionId", wrapper.Subscription.SubscriptionID).
+						Str("subscriptionId", subscriptionID).
 						Int64("currentBlock", currentBlock).
 						Msg("Updated current block")
 				}
 			}
 
 		case event := <-wrapper.EventChan:
+			// Take the current snapshot per event so a settings update applies
+			// from the next event on, without restarting the monitor.
+			sub := wrapper.current()
+
 			// Apply filters
-			if !m.matchesFilters(event, wrapper.Subscription.Filters) {
+			if !m.matchesFilters(event, sub.Filters) {
 				continue
 			}
 
 			// Route event to clients
-			if err := m.eventRouter.RouteEvent(wrapper.Subscription, event); err != nil {
+			if err := m.eventRouter.RouteEvent(sub, event); err != nil {
 				m.logger.Error().
 					Err(err).
-					Str("subscriptionId", wrapper.Subscription.SubscriptionID).
+					Str("subscriptionId", sub.SubscriptionID).
 					Msg("Failed to route event")
 			}
 
 			// Update subscription stats
-			m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, wrapper.Subscription.SubscriptionID)
+			m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, sub.SubscriptionID)
 
 			// Update current block
-			if event.BlockNumber > wrapper.Subscription.CurrentBlock {
-				m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, wrapper.Subscription.SubscriptionID, event.BlockNumber)
-				wrapper.Subscription.CurrentBlock = event.BlockNumber
+			if wrapper.advanceCurrentBlock(event.BlockNumber) {
+				m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, sub.SubscriptionID, event.BlockNumber)
 			}
 
 			m.logger.Debug().
-				Str("subscriptionId", wrapper.Subscription.SubscriptionID).
+				Str("subscriptionId", sub.SubscriptionID).
 				Str("txHash", event.TransactionID).
 				Int64("block", event.BlockNumber).
 				Msg("Event processed")
@@ -611,20 +715,21 @@ func (m *Manager) ScanHistorical(subscriptionID string, fromBlock, toBlock int64
 
 	m.logger.Info().
 		Str("subscriptionId", subscriptionID).
-		Str("address", wrapper.Subscription.Address).
+		Str("address", wrapper.current().Address).
 		Int64("fromBlock", fromBlock).
 		Int64("toBlock", toBlock).
 		Msg("Starting historical scan for subscription")
 
 	// Create a callback that routes events through the normal pipeline
 	callback := func(event *monitor.AddressEvent) {
-		// Apply filters
-		if !m.matchesFilters(event, wrapper.Subscription.Filters) {
+		// Apply the subscription's current filters (an update during the scan applies too)
+		sub := wrapper.current()
+		if !m.matchesFilters(event, sub.Filters) {
 			return
 		}
 
 		// Route event through the event router (this triggers TRC20 detection and Porto webhooks)
-		if err := m.eventRouter.RouteEvent(wrapper.Subscription, event); err != nil {
+		if err := m.eventRouter.RouteEvent(sub, event); err != nil {
 			m.logger.Error().
 				Err(err).
 				Str("subscriptionId", subscriptionID).

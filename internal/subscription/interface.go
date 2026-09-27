@@ -14,6 +14,16 @@ type SubscribeOptions struct {
 	Metadata   map[string]interface{} // Extra data
 }
 
+// SubscriptionUpdate is the desired state of the caller-controlled fields of an
+// active subscription. UpdateSubscription replaces all of them.
+type SubscriptionUpdate struct {
+	Filters    models.SubscriptionFilters
+	WalletType string
+	UserID     string
+	Label      string
+	Metadata   map[string]interface{}
+}
+
 // BatchSubscribeResult contains the result of a batch subscription operation
 type BatchSubscribeResult struct {
 	Success []*models.Subscription
@@ -35,6 +45,7 @@ type ManagerInterface interface {
 	SubscribeWithOptions(opts SubscribeOptions) (*models.Subscription, error)
 	BatchSubscribe(opts []SubscribeOptions) (*BatchSubscribeResult, error)
 	Resubscribe(address string, webhookURL string, filters models.SubscriptionFilters, scanGap bool) (*ResubscribeResult, error)
+	UpdateSubscription(subscriptionID string, upd SubscriptionUpdate) (*models.Subscription, error)
 	Unsubscribe(subscriptionID string) error
 	GetSubscription(subscriptionID string) (*models.Subscription, error)
 	GetByAddress(address string) (*models.Subscription, error)

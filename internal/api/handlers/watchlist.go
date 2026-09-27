@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"sync"
+
 	"github.com/frstrtr/mongotron/internal/storage/models"
 	"github.com/frstrtr/mongotron/internal/subscription"
 	"github.com/gofiber/fiber/v2"
@@ -30,6 +32,9 @@ const (
 // Supports multiple wallet types: NPS custodial, portal non-custodial, exchange, etc.
 type WatchListHandler struct {
 	manager subscription.ManagerInterface
+	// upsertMu serialises the lookup-then-create-or-update of watchlist writes so
+	// two concurrent posts for the same address cannot both create a subscription.
+	upsertMu sync.Mutex
 }
 
 // NewWatchListHandler creates a new watch list handler
@@ -60,27 +65,37 @@ type BulkWatchRequest struct {
 
 // WatchListResponse represents a watched address in responses
 type WatchListResponse struct {
-	SubscriptionID string                 `json:"subscriptionId"`
-	Address        string                 `json:"address"`
-	WalletType     WalletType             `json:"walletType"`
-	UserID         string                 `json:"userId,omitempty"`
-	Label          string                 `json:"label,omitempty"`
-	WebhookURL     string                 `json:"webhookUrl,omitempty"`
-	TokenFilter    []string               `json:"tokenFilter,omitempty"`
-	Status         string                 `json:"status"`
-	EventsCount    int64                  `json:"eventsCount"`
-	StartBlock     int64                  `json:"startBlock"`
-	CurrentBlock   int64                  `json:"currentBlock"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt      string                 `json:"createdAt"`
+	SubscriptionID string     `json:"subscriptionId"`
+	Address        string     `json:"address"`
+	WalletType     WalletType `json:"walletType"`
+	UserID         string     `json:"userId,omitempty"`
+	Label          string     `json:"label,omitempty"`
+	WebhookURL     string     `json:"webhookUrl,omitempty"`
+	TokenFilter    []string   `json:"tokenFilter,omitempty"`
+	// AssetTypes are the asset types the subscription was asked to watch, e.g.
+	// ["TRX", "TRC20"]. Always present (an empty list means all transfer types),
+	// so its presence also tells a client that this server supports upsert.
+	AssetTypes []string `json:"assetTypes"`
+	// Filters are the effective filters the running monitor applies. TRX is
+	// watched when filters.contractTypes is empty or contains "TransferContract".
+	Filters      models.SubscriptionFilters `json:"filters"`
+	Status       string                     `json:"status"`
+	EventsCount  int64                      `json:"eventsCount"`
+	StartBlock   int64                      `json:"startBlock"`
+	CurrentBlock int64                      `json:"currentBlock"`
+	Metadata     map[string]interface{}     `json:"metadata,omitempty"`
+	CreatedAt    string                     `json:"createdAt"`
 }
 
-// BulkWatchResponse represents bulk add response
+// BulkWatchResponse represents bulk add response. Added counts every address that
+// succeeded (created or updated in place), Created and Updated split it.
 type BulkWatchResponse struct {
 	Success []WatchListResponse `json:"success"`
 	Failed  []BulkFailure       `json:"failed,omitempty"`
 	Total   int                 `json:"total"`
 	Added   int                 `json:"added"`
+	Created int                 `json:"created"`
+	Updated int                 `json:"updated"`
 }
 
 // BulkFailure represents a failed bulk operation item
@@ -111,8 +126,11 @@ type ResubscribeResponse struct {
 }
 
 // AddToWatchList handles POST /api/v1/watchlist
-// Adds a single address to the watch list for TRC20 transfer monitoring
-// Supports all wallet types: NPS custodial, portal non-custodial, exchange, etc.
+//
+// Upsert: when the address has no active subscription, a new one is created and
+// the answer is 201. When an active subscription exists, it is updated in place
+// and the answer is 200 with the row: the running monitor keeps going (no gap)
+// and no second subscription is created. See upsertWatch for which fields change.
 func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 	var req WatchAddressRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -130,28 +148,51 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 		})
 	}
 
-	// Default wallet type to general if not specified
-	if req.WalletType == "" {
-		req.WalletType = WalletTypeGeneral
-	}
-
-	// Validate wallet type
-	if !isValidWalletType(req.WalletType) {
+	// Validate wallet type (empty means general on create, unchanged on update)
+	if req.WalletType != "" && !isValidWalletType(req.WalletType) {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
 			Error:   "invalid_wallet_type",
 			Message: "Invalid wallet type. Must be one of: platform, nps, portal, exchange, gasstation, invoice, general",
 		})
 	}
 
-	// Build contract types based on asset filter
-	contractTypes := buildContractTypes(req.AssetTypes)
+	sub, created, err := h.upsertWatch(req, req.WebhookURL)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
+			Error:   "subscription_failed",
+			Message: err.Error(),
+		})
+	}
 
-	// Create filters
-	filters := models.SubscriptionFilters{
-		ContractTypes: contractTypes,
-		AssetTypes:    req.AssetTypes,
-		TokenFilter:   req.TokenFilter,
-		OnlySuccess:   true,
+	status := fiber.StatusOK
+	if created {
+		status = fiber.StatusCreated
+	}
+	return c.Status(status).JSON(toWatchListResponse(sub))
+}
+
+// upsertWatch creates the subscription for req.Address, or updates the active one
+// in place. It reports whether a new subscription was created.
+//
+// Update semantics (fields omitted from the request keep their stored value):
+//   - assetTypes present: the contract type filter is rebuilt from it (an empty
+//     list means all transfer types) and onlySuccess is set, as on create.
+//   - tokenFilter present: replaces the stored token filter.
+//   - walletType, userId, label: replace the stored value when non-empty.
+//   - metadata present: replaces the stored metadata as a whole (no merge).
+//   - webhookUrl and startBlock are creation-only and never change an existing row.
+func (h *WatchListHandler) upsertWatch(req WatchAddressRequest, webhookURL string) (*models.Subscription, bool, error) {
+	h.upsertMu.Lock()
+	defer h.upsertMu.Unlock()
+
+	if existing, err := h.manager.GetByAddress(req.Address); err == nil && existing != nil && existing.Status == "active" {
+		sub, err := h.manager.UpdateSubscription(existing.SubscriptionID, resolveWatchUpdate(existing, req))
+		return sub, false, err
+	}
+
+	walletType := req.WalletType
+	if walletType == "" {
+		walletType = WalletTypeGeneral
 	}
 
 	// Use startBlock from request, or -1 for current block
@@ -160,31 +201,80 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 		startBlock = -1 // Will use latest block
 	}
 
-	// Create subscription with full options
 	sub, err := h.manager.SubscribeWithOptions(subscription.SubscribeOptions{
 		Address:    req.Address,
-		WebhookURL: req.WebhookURL,
-		Filters:    filters,
+		WebhookURL: webhookURL,
+		Filters:    subscription.FiltersForAssets(req.AssetTypes, req.TokenFilter),
 		StartBlock: startBlock,
-		WalletType: string(req.WalletType),
+		WalletType: string(walletType),
 		UserID:     req.UserID,
 		Label:      req.Label,
 		Metadata:   req.Metadata,
 	})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
-			Error:   "subscription_failed",
-			Message: err.Error(),
-		})
+		return nil, false, err
+	}
+	return sub, true, nil
+}
+
+// resolveWatchUpdate computes the desired state of an existing subscription from a
+// watchlist request, keeping stored values for omitted fields (see upsertWatch).
+func resolveWatchUpdate(existing *models.Subscription, req WatchAddressRequest) subscription.SubscriptionUpdate {
+	filters := existing.Filters
+	if req.AssetTypes != nil {
+		filters.ContractTypes = subscription.ContractTypesForAssets(req.AssetTypes)
+		filters.AssetTypes = req.AssetTypes
+		filters.OnlySuccess = true
+	}
+	if req.TokenFilter != nil {
+		filters.TokenFilter = req.TokenFilter
 	}
 
-	response := WatchListResponse{
+	upd := subscription.SubscriptionUpdate{
+		Filters:    filters,
+		WalletType: existing.WalletType,
+		UserID:     existing.UserID,
+		Label:      existing.Label,
+		Metadata:   existing.Metadata,
+	}
+	if req.WalletType != "" {
+		upd.WalletType = string(req.WalletType)
+	}
+	if req.UserID != "" {
+		upd.UserID = req.UserID
+	}
+	if req.Label != "" {
+		upd.Label = req.Label
+	}
+	if req.Metadata != nil {
+		upd.Metadata = req.Metadata
+	}
+	return upd
+}
+
+// toWatchListResponse renders a subscription as a watchlist row.
+func toWatchListResponse(sub *models.Subscription) WatchListResponse {
+	// Get wallet type from subscription (default to general if empty)
+	walletType := WalletType(sub.WalletType)
+	if walletType == "" {
+		walletType = WalletTypeGeneral
+	}
+
+	assetTypes := sub.Filters.AssetTypes
+	if assetTypes == nil {
+		assetTypes = []string{}
+	}
+
+	return WatchListResponse{
 		SubscriptionID: sub.SubscriptionID,
 		Address:        sub.Address,
-		WalletType:     WalletType(sub.WalletType),
+		WalletType:     walletType,
+		UserID:         sub.UserID,
 		Label:          sub.Label,
 		WebhookURL:     sub.WebhookURL,
-		TokenFilter:    req.TokenFilter,
+		TokenFilter:    sub.Filters.TokenFilter,
+		AssetTypes:     assetTypes,
+		Filters:        sub.Filters,
 		Status:         sub.Status,
 		EventsCount:    sub.EventsCount,
 		StartBlock:     sub.StartBlock,
@@ -192,112 +282,12 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 		Metadata:       sub.Metadata,
 		CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
-
-	return c.Status(fiber.StatusCreated).JSON(response)
 }
 
-// buildContractTypes returns the contract types to monitor based on asset types
+// buildContractTypes returns the contract types to monitor based on asset types.
+// Kept as a thin alias: the mapping lives in the subscription package.
 func buildContractTypes(assetTypes []string) []string {
-	if len(assetTypes) == 0 {
-		// Default: monitor all transfer types
-		return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
-	}
-
-	contractTypes := make([]string, 0, 10)
-	for _, asset := range assetTypes {
-		switch asset {
-		case "TRX":
-			if !contains(contractTypes, "TransferContract") {
-				contractTypes = append(contractTypes, "TransferContract")
-			}
-		case "TRC10":
-			if !contains(contractTypes, "TransferAssetContract") {
-				contractTypes = append(contractTypes, "TransferAssetContract")
-			}
-		case "TRC20":
-			if !contains(contractTypes, "TriggerSmartContract") {
-				contractTypes = append(contractTypes, "TriggerSmartContract")
-			}
-		case "*":
-			// All transfer types (legacy)
-			return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
-
-		// Staking operations
-		case "STAKE", "FREEZE":
-			if !contains(contractTypes, "FreezeBalanceV2Contract") {
-				contractTypes = append(contractTypes, "FreezeBalanceV2Contract")
-			}
-		case "UNSTAKE", "UNFREEZE":
-			if !contains(contractTypes, "UnfreezeBalanceV2Contract") {
-				contractTypes = append(contractTypes, "UnfreezeBalanceV2Contract")
-			}
-		case "WITHDRAW_UNSTAKE":
-			if !contains(contractTypes, "WithdrawExpireUnfreezeContract") {
-				contractTypes = append(contractTypes, "WithdrawExpireUnfreezeContract")
-			}
-
-		// Delegation operations
-		case "DELEGATE":
-			if !contains(contractTypes, "DelegateResourceContract") {
-				contractTypes = append(contractTypes, "DelegateResourceContract")
-			}
-		case "UNDELEGATE":
-			if !contains(contractTypes, "UnDelegateResourceContract") {
-				contractTypes = append(contractTypes, "UnDelegateResourceContract")
-			}
-
-		// Voting operations
-		case "VOTE":
-			if !contains(contractTypes, "VoteWitnessContract") {
-				contractTypes = append(contractTypes, "VoteWitnessContract")
-			}
-
-		// Permission operations (CRITICAL for security)
-		case "PERMISSION":
-			if !contains(contractTypes, "AccountPermissionUpdateContract") {
-				contractTypes = append(contractTypes, "AccountPermissionUpdateContract")
-			}
-
-		// Claim voting rewards
-		case "CLAIM":
-			if !contains(contractTypes, "WithdrawBalanceContract") {
-				contractTypes = append(contractTypes, "WithdrawBalanceContract")
-			}
-
-		// All operations for full gas station monitoring
-		case "ALL_OPERATIONS", "FULL":
-			return []string{
-				"TransferContract",
-				"TransferAssetContract",
-				"TriggerSmartContract",
-				"FreezeBalanceV2Contract",
-				"UnfreezeBalanceV2Contract",
-				"WithdrawExpireUnfreezeContract",
-				"DelegateResourceContract",
-				"UnDelegateResourceContract",
-				"VoteWitnessContract",
-				"AccountPermissionUpdateContract",
-				"WithdrawBalanceContract",
-			}
-		}
-	}
-
-	if len(contractTypes) == 0 {
-		// Fallback to all transfer types
-		return []string{"TransferContract", "TransferAssetContract", "TriggerSmartContract"}
-	}
-
-	return contractTypes
-}
-
-// contains checks if a slice contains a string
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return subscription.ContractTypesForAssets(assetTypes)
 }
 
 // isValidWalletType checks if the wallet type is valid
@@ -350,10 +340,12 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 			continue
 		}
 
-		// Default wallet type
-		walletType := addr.WalletType
-		if walletType == "" {
-			walletType = WalletTypeGeneral
+		if addr.WalletType != "" && !isValidWalletType(addr.WalletType) {
+			response.Failed = append(response.Failed, BulkFailure{
+				Address: addr.Address,
+				Error:   "Invalid wallet type",
+			})
+			continue
 		}
 
 		// Use request-level webhook or address-specific
@@ -362,34 +354,8 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 			webhookURL = req.WebhookURL
 		}
 
-		// Use startBlock from address or default to current
-		startBlock := addr.StartBlock
-		if startBlock == 0 {
-			startBlock = -1
-		}
-
-		// Build contract types based on asset filter
-		contractTypes := buildContractTypes(addr.AssetTypes)
-
-		// Create filters
-		filters := models.SubscriptionFilters{
-			ContractTypes: contractTypes,
-			AssetTypes:    addr.AssetTypes,
-			TokenFilter:   addr.TokenFilter,
-			OnlySuccess:   true,
-		}
-
-		// Create subscription with full options
-		sub, err := h.manager.SubscribeWithOptions(subscription.SubscribeOptions{
-			Address:    addr.Address,
-			WebhookURL: webhookURL,
-			Filters:    filters,
-			StartBlock: startBlock,
-			WalletType: string(walletType),
-			UserID:     addr.UserID,
-			Label:      addr.Label,
-			Metadata:   addr.Metadata,
-		})
+		// Same upsert as the single endpoint: an active subscription is updated in place
+		sub, created, err := h.upsertWatch(addr, webhookURL)
 		if err != nil {
 			response.Failed = append(response.Failed, BulkFailure{
 				Address: addr.Address,
@@ -397,22 +363,13 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 			})
 			continue
 		}
+		if created {
+			response.Created++
+		} else {
+			response.Updated++
+		}
 
-		response.Success = append(response.Success, WatchListResponse{
-			SubscriptionID: sub.SubscriptionID,
-			Address:        sub.Address,
-			WalletType:     WalletType(sub.WalletType),
-			UserID:         sub.UserID,
-			Label:          sub.Label,
-			WebhookURL:     sub.WebhookURL,
-			TokenFilter:    addr.TokenFilter,
-			Status:         sub.Status,
-			EventsCount:    sub.EventsCount,
-			StartBlock:     sub.StartBlock,
-			CurrentBlock:   sub.CurrentBlock,
-			Metadata:       sub.Metadata,
-			CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		})
+		response.Success = append(response.Success, toWatchListResponse(sub))
 	}
 
 	response.Added = len(response.Success)
@@ -548,31 +505,14 @@ func (h *WatchListHandler) GetWatchList(c *fiber.Ctx) error {
 	// Convert to watch list response
 	watchList := make([]WatchListResponse, 0, len(subs))
 	for _, sub := range subs {
-		// Get wallet type from subscription (default to general if empty)
-		walletType := WalletType(sub.WalletType)
-		if walletType == "" {
-			walletType = WalletTypeGeneral
-		}
+		row := toWatchListResponse(sub)
 
 		// Apply wallet type filter if specified
-		if walletTypeFilter != "" && string(walletType) != walletTypeFilter {
+		if walletTypeFilter != "" && string(row.WalletType) != walletTypeFilter {
 			continue
 		}
 
-		watchList = append(watchList, WatchListResponse{
-			SubscriptionID: sub.SubscriptionID,
-			Address:        sub.Address,
-			WalletType:     walletType,
-			UserID:         sub.UserID,
-			Label:          sub.Label,
-			WebhookURL:     sub.WebhookURL,
-			Status:         sub.Status,
-			EventsCount:    sub.EventsCount,
-			StartBlock:     sub.StartBlock,
-			CurrentBlock:   sub.CurrentBlock,
-			Metadata:       sub.Metadata,
-			CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		})
+		watchList = append(watchList, row)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -602,26 +542,7 @@ func (h *WatchListHandler) GetWatchedAddress(c *fiber.Ctx) error {
 		})
 	}
 
-	// Get wallet type from subscription (default to general if empty)
-	walletType := WalletType(sub.WalletType)
-	if walletType == "" {
-		walletType = WalletTypeGeneral
-	}
-
-	response := WatchListResponse{
-		SubscriptionID: sub.SubscriptionID,
-		Address:        sub.Address,
-		WalletType:     walletType,
-		UserID:         sub.UserID,
-		Label:          sub.Label,
-		WebhookURL:     sub.WebhookURL,
-		Status:         sub.Status,
-		EventsCount:    sub.EventsCount,
-		StartBlock:     sub.StartBlock,
-		CurrentBlock:   sub.CurrentBlock,
-		Metadata:       sub.Metadata,
-		CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
-	}
+	response := toWatchListResponse(sub)
 
 	return c.Status(fiber.StatusOK).JSON(response)
 }
