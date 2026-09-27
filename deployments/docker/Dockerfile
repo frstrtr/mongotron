@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make
@@ -15,7 +15,7 @@ COPY . .
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo \
-    -ldflags="-w -s" -o mongotron ./cmd/mongotron
+    -ldflags="-w -s" -o mongotron ./cmd/api-server
 
 # Final stage
 FROM alpine:latest

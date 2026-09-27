@@ -78,7 +78,11 @@ func main() {
 	if err := manager.Start(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to start subscription manager")
 	}
-	defer manager.Stop()
+	defer func() {
+		if err := manager.Stop(); err != nil {
+			log.Error().Err(err).Msg("Failed to stop subscription manager")
+		}
+	}()
 
 	// Per-subscription webhook posts are signed when a subscription secret is configured
 	manager.GetEventRouter().SetSubscriptionSecret(cfg.Webhooks.SubscriptionSecret)

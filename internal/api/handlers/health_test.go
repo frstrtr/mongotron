@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHealthCheck_Success(t *testing.T) {
@@ -31,7 +32,7 @@ func TestHealthCheck_Success(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response HealthResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "ok", response.Status)
 	assert.Equal(t, "1.0.0-test", response.Version)
@@ -60,7 +61,7 @@ func TestReadinessCheck_Success(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response map[string]interface{}
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "ready", response["status"])
 	assert.NotNil(t, response["timestamp"])
@@ -85,7 +86,7 @@ func TestLivenessCheck_Success(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response map[string]interface{}
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "alive", response["status"])
 	assert.NotNil(t, response["timestamp"])
@@ -109,7 +110,7 @@ func TestReadinessCheck_NotReady(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "not_ready", response.Error)
 }

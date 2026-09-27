@@ -9,6 +9,7 @@ help:
 	@echo "MongoTron - Makefile Commands"
 	@echo ""
 	@echo "Build Commands:"
+	@echo "  make build            - Build all binaries into build/bin (CI)"
 	@echo "  make build-api        - Build API server binary"
 	@echo "  make build-cli        - Build CLI binary"
 	@echo "  make build-all        - Build both binaries"
@@ -33,6 +34,11 @@ help:
 	@echo ""
 
 # Build targets
+build:
+	@echo "Building all binaries into build/bin..."
+	@mkdir -p build/bin
+	@go build -o build/bin/ ./cmd/...
+
 build-api:
 	@echo "Building API server..."
 	@go build -o bin/mongotron-api cmd/api-server/main.go

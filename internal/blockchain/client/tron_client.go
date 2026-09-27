@@ -13,6 +13,7 @@ import (
 	"github.com/fbsobreira/gotron-sdk/pkg/proto/core"
 	"github.com/frstrtr/mongotron/pkg/logger"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -67,13 +68,21 @@ func (c *TronClient) connect(cfg Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
-	opts := []grpc.DialOption{
+	// The passthrough scheme keeps the resolution the former grpc.DialContext used
+	// (the address goes to the dialer as is, no DNS resolver).
+	conn, err := grpc.NewClient("passthrough:///"+address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to dial: %w", err)
 	}
 
-	conn, err := grpc.DialContext(ctx, address, opts...)
-	if err != nil {
+	// NewClient does not connect; wait for a ready connection within the timeout,
+	// as the former blocking dial did, so a node that is down fails at startup.
+	if err := waitForReady(ctx, conn); err != nil {
+		if closeErr := conn.Close(); closeErr != nil {
+			c.logger.Warn().Err(closeErr).Msg("Failed to close Tron node connection")
+		}
 		return fmt.Errorf("failed to dial: %w", err)
 	}
 
@@ -86,6 +95,24 @@ func (c *TronClient) connect(cfg Config) error {
 		Msg("Successfully connected to Tron node")
 
 	return nil
+}
+
+// waitForReady starts connecting and blocks until the connection is ready or ctx
+// ends. Transient failures are retried by the channel until then.
+func waitForReady(ctx context.Context, conn *grpc.ClientConn) error {
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if state == connectivity.Shutdown {
+			return errors.New("connection shut down")
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			return fmt.Errorf("connection not ready (state %s): %w", state, ctx.Err())
+		}
+	}
 }
 
 // GetNowBlock retrieves the latest block from the blockchain
