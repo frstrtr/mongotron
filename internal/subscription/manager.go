@@ -619,7 +619,9 @@ func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 				currentBlock := wrapper.Monitor.GetLastBlockNumber()
 				if wrapper.advanceCurrentBlock(currentBlock) {
 					subscriptionID := wrapper.current().SubscriptionID
-					m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, subscriptionID, currentBlock)
+					if err := m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, subscriptionID, currentBlock); err != nil {
+						m.logger.Warn().Err(err).Str("subscriptionId", subscriptionID).Msg("Failed to store current block")
+					}
 					m.logger.Debug().
 						Str("subscriptionId", subscriptionID).
 						Int64("currentBlock", currentBlock).
@@ -646,11 +648,15 @@ func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 			}
 
 			// Update subscription stats
-			m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, sub.SubscriptionID)
+			if err := m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, sub.SubscriptionID); err != nil {
+				m.logger.Warn().Err(err).Str("subscriptionId", sub.SubscriptionID).Msg("Failed to count event")
+			}
 
 			// Update current block
 			if wrapper.advanceCurrentBlock(event.BlockNumber) {
-				m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, sub.SubscriptionID, event.BlockNumber)
+				if err := m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, sub.SubscriptionID, event.BlockNumber); err != nil {
+					m.logger.Warn().Err(err).Str("subscriptionId", sub.SubscriptionID).Msg("Failed to store current block")
+				}
 			}
 
 			m.logger.Debug().
