@@ -27,25 +27,33 @@ func (h *WebSocketHandler) StreamEvents(c *wsfiber.Conn) {
 	// Get subscription ID from path parameter
 	subscriptionID := c.Params("subscriptionId")
 	if subscriptionID == "" {
-		c.WriteMessage(wsfiber.CloseMessage, []byte("Missing subscription ID"))
+		rejectStream(c, "Missing subscription ID")
 		return
 	}
 
 	// Verify subscription exists
 	sub, err := h.manager.GetSubscription(subscriptionID)
 	if err != nil {
-		c.WriteMessage(wsfiber.CloseMessage, []byte("Subscription not found"))
+		rejectStream(c, "Subscription not found")
 		return
 	}
 
 	// Verify subscription is active
 	if sub.Status != "active" {
-		c.WriteMessage(wsfiber.CloseMessage, []byte("Subscription is not active"))
+		rejectStream(c, "Subscription is not active")
 		return
 	}
 
 	// Handle WebSocket connection (blocking call)
 	h.hub.HandleWebSocket(c, subscriptionID)
+}
+
+// rejectStream tells the client why the stream is refused with a close frame
+// (policy violation) before the handler returns and the connection is closed.
+// It is best effort: the connection is closed either way, and the handler has
+// no one to report a failed write to.
+func rejectStream(c *wsfiber.Conn, reason string) {
+	_ = c.WriteMessage(wsfiber.CloseMessage, wsfiber.FormatCloseMessage(wsfiber.ClosePolicyViolation, reason))
 }
 
 // Middleware to upgrade HTTP connection to WebSocket

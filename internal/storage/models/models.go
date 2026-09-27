@@ -80,6 +80,7 @@ type Subscription struct {
 	CurrentBlock   int64                  `bson:"current_block" json:"currentBlock"`
 	LastSeenBlock  int64                  `bson:"last_seen_block,omitempty" json:"lastSeenBlock,omitempty"` // Block when stopped (for gap scanning)
 	StoppedAt      *time.Time             `bson:"stopped_at,omitempty" json:"stoppedAt,omitempty"`          // Timestamp when stopped
+	GapScannedAt   *time.Time             `bson:"gap_scanned_at,omitempty" json:"gapScannedAt,omitempty"`   // When a resubscribe scanned the gap after this stop (set on stopped rows replaced by a newer subscription)
 	WalletType     string                 `bson:"wallet_type,omitempty" json:"walletType,omitempty"`        // "platform", "nps", "portal", "exchange", "general"
 	UserID         string                 `bson:"user_id,omitempty" json:"userId,omitempty"`                // telegram_id or user identifier
 	Label          string                 `bson:"label,omitempty" json:"label,omitempty"`                   // Optional label

@@ -44,7 +44,7 @@ type ManagerInterface interface {
 	Subscribe(address string, webhookURL string, filters models.SubscriptionFilters, startBlock int64) (*models.Subscription, error)
 	SubscribeWithOptions(opts SubscribeOptions) (*models.Subscription, error)
 	BatchSubscribe(opts []SubscribeOptions) (*BatchSubscribeResult, error)
-	Resubscribe(address string, webhookURL string, filters models.SubscriptionFilters, scanGap bool) (*ResubscribeResult, error)
+	Resubscribe(opts ResubscribeOptions) (*ResubscribeResult, error)
 	UpdateSubscription(subscriptionID string, upd SubscriptionUpdate) (*models.Subscription, error)
 	Unsubscribe(subscriptionID string) error
 	GetSubscription(subscriptionID string) (*models.Subscription, error)

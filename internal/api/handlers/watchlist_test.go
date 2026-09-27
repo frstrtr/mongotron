@@ -28,6 +28,7 @@ type fakeWatchManager struct {
 	subs                    map[string]*models.Subscription // key: subscription ID
 	creates                 int
 	updates                 int
+	unsubscribes            int
 }
 
 func newFakeWatchManager() *fakeWatchManager {
@@ -92,7 +93,19 @@ func (f *fakeWatchManager) GetByAddress(address string) (*models.Subscription, e
 		cp := *fallback
 		return &cp, nil
 	}
-	return nil, fmt.Errorf("subscription not found for address: %s", address)
+	return nil, fmt.Errorf("%w for address: %s", subscription.ErrSubscriptionNotFound, address)
+}
+
+func (f *fakeWatchManager) Unsubscribe(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sub, ok := f.subs[id]
+	if !ok || sub.Status != "active" {
+		return fmt.Errorf("subscription not found")
+	}
+	f.unsubscribes++
+	sub.Status = "stopped"
+	return nil
 }
 
 func (f *fakeWatchManager) List(limit, skip int64) ([]*models.Subscription, int64, error) {
@@ -125,6 +138,8 @@ func watchApp(m subscription.ManagerInterface) *fiber.App {
 	app.Post("/api/v1/watchlist/bulk", h.BulkAddToWatchList)
 	app.Get("/api/v1/watchlist", h.GetWatchList)
 	app.Get("/api/v1/watchlist/:address", h.GetWatchedAddress)
+	app.Delete("/api/v1/watchlist/:address", h.RemoveFromWatchList)
+	app.Post("/api/v1/watchlist/:address/resubscribe", h.ResubscribeToWatchList)
 	return app
 }
 

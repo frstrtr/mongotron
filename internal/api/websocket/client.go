@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"io"
 	"time"
 
 	"github.com/frstrtr/mongotron/pkg/logger"
@@ -62,10 +63,15 @@ func (c *Client) readPump() {
 		c.conn.Close()
 	}()
 
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	// Clients only send small control and heartbeat frames; anything larger ends the connection.
+	c.conn.SetReadLimit(maxMessageSize)
+	if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		c.logger.Warn().Err(err).Str("clientId", c.id).Msg("WebSocket set read deadline failed")
+		return
+	}
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
+		// Returning the error ends the read loop, which unregisters the client.
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
@@ -105,11 +111,15 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				c.logger.Debug().Err(err).Str("clientId", c.id).Msg("WebSocket set write deadline failed")
+				return
+			}
 
 			if !ok {
-				// The hub closed the channel
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				// The hub closed the channel. The close frame is best effort: the
+				// connection is torn down right after either way.
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -117,13 +127,16 @@ func (c *Client) writePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+			if err := c.writeFrame(w, message); err != nil {
+				return
+			}
 
 			// Add queued messages to the current websocket message
 			n := len(c.send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-c.send)
+				if err := c.writeFrame(w, []byte{'\n'}, <-c.send); err != nil {
+					return
+				}
 			}
 
 			if err := w.Close(); err != nil {
@@ -131,12 +144,27 @@ func (c *Client) writePump() {
 			}
 
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				c.logger.Debug().Err(err).Str("clientId", c.id).Msg("WebSocket set write deadline failed")
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}
 	}
+}
+
+// writeFrame writes the parts to the current websocket message writer. A write
+// error means the connection is gone, so the caller stops the write pump.
+func (c *Client) writeFrame(w io.Writer, parts ...[]byte) error {
+	for _, part := range parts {
+		if _, err := w.Write(part); err != nil {
+			c.logger.Debug().Err(err).Str("clientId", c.id).Msg("WebSocket write failed")
+			return err
+		}
+	}
+	return nil
 }
 
 // GetID returns the client ID

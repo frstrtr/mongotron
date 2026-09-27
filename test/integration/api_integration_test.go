@@ -281,7 +281,7 @@ func TestAPIIntegration_Pagination(t *testing.T) {
 		require.NoError(t, err)
 
 		var subscription handlers.SubscriptionResponse
-		json.NewDecoder(resp.Body).Decode(&subscription)
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&subscription))
 		resp.Body.Close()
 
 		subscriptionIDs = append(subscriptionIDs, subscription.SubscriptionID)
@@ -308,7 +308,7 @@ func TestAPIIntegration_Pagination(t *testing.T) {
 		defer resp.Body.Close()
 
 		var page1 handlers.ListSubscriptionsResponse
-		json.NewDecoder(resp.Body).Decode(&page1)
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&page1))
 
 		assert.Equal(t, int64(2), page1.Limit)
 		assert.Equal(t, int64(0), page1.Skip)
@@ -320,7 +320,7 @@ func TestAPIIntegration_Pagination(t *testing.T) {
 		defer resp.Body.Close()
 
 		var page2 handlers.ListSubscriptionsResponse
-		json.NewDecoder(resp.Body).Decode(&page2)
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&page2))
 
 		assert.Equal(t, int64(2), page2.Limit)
 		assert.Equal(t, int64(2), page2.Skip)

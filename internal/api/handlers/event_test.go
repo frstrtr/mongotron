@@ -13,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockEventRepository is a mock implementation of EventRepositoryInterface
@@ -134,7 +135,7 @@ func TestListEvents_Success(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ListEventsResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, 2, len(response.Events))
 	assert.Equal(t, int64(2), response.Total)
@@ -168,7 +169,7 @@ func TestListEvents_WithPagination(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ListEventsResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, int64(10), response.Limit)
 	assert.Equal(t, int64(20), response.Skip)
@@ -200,7 +201,7 @@ func TestListEvents_InvalidLimit(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ListEventsResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, int64(50), response.Limit) // Should be capped to 50
 
@@ -240,7 +241,7 @@ func TestListEvents_ByAddress(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ListEventsResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, 1, len(response.Events))
 	assert.Equal(t, address, response.Events[0].Address)
@@ -268,7 +269,7 @@ func TestListEvents_DatabaseError(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "list_failed", response.Error)
 	assert.Contains(t, response.Message, "database error")
@@ -298,7 +299,7 @@ func TestListEvents_CountError(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ListEventsResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	// Count error should default to 0
 	assert.Equal(t, int64(0), response.Total)
@@ -341,7 +342,7 @@ func TestGetEvent_Success(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response EventResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "event-123", response.EventID)
 	assert.Equal(t, "transfer", response.Type)
@@ -370,7 +371,7 @@ func TestGetEvent_NotFound(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "event_not_found", response.Error)
 
@@ -432,7 +433,7 @@ func TestGetEventByTransactionHash_Success(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response []*EventResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, 1, len(response))
 	assert.Equal(t, "event-1", response[0].EventID)
@@ -478,7 +479,7 @@ func TestGetEventByTransactionHash_MultipleEvents(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response []*EventResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, 2, len(response))
 	assert.Equal(t, "event-1", response[0].EventID)
@@ -508,7 +509,7 @@ func TestGetEventByTransactionHash_NotFound(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "event_not_found", response.Error)
 	assert.Contains(t, response.Message, "No events found")
@@ -537,7 +538,7 @@ func TestGetEventByTransactionHash_DatabaseError(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "query_failed", response.Error)
 

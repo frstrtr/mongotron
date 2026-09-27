@@ -109,6 +109,21 @@ func FiltersForAssets(assetTypes, tokenFilter []string) models.SubscriptionFilte
 	}
 }
 
+// WithAssetTypes returns the stored filters rebuilt for new asset types: the
+// contract types come from the asset types (an empty list means all transfer
+// types) and onlySuccess is set, as on create. Token filter and amount limits are
+// kept. A nil assetTypes means "not given" and returns the filters unchanged.
+func WithAssetTypes(stored models.SubscriptionFilters, assetTypes []string) models.SubscriptionFilters {
+	if assetTypes == nil {
+		return stored
+	}
+	filters := stored
+	filters.ContractTypes = ContractTypesForAssets(assetTypes)
+	filters.AssetTypes = assetTypes
+	filters.OnlySuccess = true
+	return filters
+}
+
 func containsString(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
