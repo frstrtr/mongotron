@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -77,6 +78,13 @@ func (w *MonitorWrapper) applySettings(upd SubscriptionUpdate) *models.Subscript
 		next.Metadata = upd.Metadata
 	})
 }
+
+var (
+	// ErrSubscriptionNotFound is returned when no subscription matches.
+	ErrSubscriptionNotFound = errors.New("subscription not found")
+	// ErrSubscriptionNotActive is returned when an operation needs an active subscription.
+	ErrSubscriptionNotActive = errors.New("subscription is not active")
+)
 
 // Manager manages active subscriptions and monitors
 type Manager struct {
@@ -198,7 +206,12 @@ func (m *Manager) SubscribeWithOptions(opts SubscribeOptions) (*models.Subscript
 	// Start monitoring
 	if err := m.startMonitor(sub); err != nil {
 		// Rollback: delete subscription
-		m.db.SubscriptionRepo.Delete(m.ctx, sub.ID)
+		if delErr := m.db.SubscriptionRepo.Delete(m.ctx, sub.ID); delErr != nil {
+			m.logger.Error().
+				Err(delErr).
+				Str("subscriptionId", sub.SubscriptionID).
+				Msg("Failed to roll back subscription after monitor start failure")
+		}
 		return nil, fmt.Errorf("failed to start monitor: %w", err)
 	}
 
@@ -253,7 +266,7 @@ func (m *Manager) Unsubscribe(subscriptionID string) error {
 
 	wrapper, exists := m.monitors[subscriptionID]
 	if !exists {
-		return fmt.Errorf("subscription not found")
+		return m.stopWithoutMonitor(subscriptionID)
 	}
 
 	// Get the last processed block from the monitor before stopping
@@ -286,107 +299,29 @@ func (m *Manager) Unsubscribe(subscriptionID string) error {
 	return nil
 }
 
-// ResubscribeResult contains the result of a resubscription operation
-type ResubscribeResult struct {
-	Subscription *models.Subscription
-	GapDetected  bool
-	GapStart     int64
-	GapEnd       int64
-	GapScanning  bool
-}
-
-// Resubscribe reactivates a stopped subscription and optionally scans the gap
-// If the address was previously subscribed and stopped, it will:
-// 1. Detect the gap between lastSeenBlock and current block
-// 2. Start monitoring from current block
-// 3. Trigger background scan to fill the gap
-func (m *Manager) Resubscribe(address string, webhookURL string, filters models.SubscriptionFilters, scanGap bool) (*ResubscribeResult, error) {
-	// Find existing stopped subscription for this address
-	subs, err := m.db.SubscriptionRepo.FindByAddress(m.ctx, address)
+// stopWithoutMonitor stops a subscription that has no running monitor (caller holds
+// m.mu). A row that is active in storage without a monitor (its monitor failed to
+// start) is marked stopped at its stored block, so it can be removed and later
+// resubscribed. A subscription that is not active returns ErrSubscriptionNotActive.
+func (m *Manager) stopWithoutMonitor(subscriptionID string) error {
+	sub, err := m.db.SubscriptionRepo.FindBySubscriptionID(m.ctx, subscriptionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to lookup address: %w", err)
+		return err
+	}
+	if sub.Status != "active" {
+		return fmt.Errorf("%w (status %q)", ErrSubscriptionNotActive, sub.Status)
 	}
 
-	var stoppedSub *models.Subscription
-	for _, sub := range subs {
-		if sub.Status == "stopped" && sub.LastSeenBlock > 0 {
-			stoppedSub = sub
-			break
-		}
+	if err := m.db.SubscriptionRepo.UpdateStatusWithBlock(m.ctx, sub.ID, "stopped", sub.CurrentBlock); err != nil {
+		return fmt.Errorf("failed to stop subscription: %w", err)
 	}
 
-	// Get current block from tron client
-	block, err := m.tronClient.GetNowBlock(m.ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get current block: %w", err)
-	}
-	currentBlock := block.BlockHeader.RawData.Number
+	m.logger.Warn().
+		Str("subscriptionId", subscriptionID).
+		Int64("lastSeenBlock", sub.CurrentBlock).
+		Msg("Subscription was active in storage without a running monitor; marked stopped")
 
-	result := &ResubscribeResult{}
-
-	if stoppedSub != nil {
-		// Found a previously stopped subscription - detect gap
-		result.GapDetected = true
-		result.GapStart = stoppedSub.LastSeenBlock
-		result.GapEnd = currentBlock
-
-		m.logger.Info().
-			Str("address", address).
-			Int64("gapStart", result.GapStart).
-			Int64("gapEnd", result.GapEnd).
-			Int64("gapBlocks", result.GapEnd-result.GapStart).
-			Msg("Gap detected for resubscription")
-
-		// Reactivate the existing subscription
-		stoppedSub.Status = "active"
-		stoppedSub.WebhookURL = webhookURL
-		stoppedSub.Filters = filters
-		stoppedSub.CurrentBlock = currentBlock
-
-		if err := m.db.SubscriptionRepo.Update(m.ctx, stoppedSub); err != nil {
-			return nil, fmt.Errorf("failed to reactivate subscription: %w", err)
-		}
-
-		// Start monitoring from current block
-		if err := m.startMonitor(stoppedSub); err != nil {
-			return nil, fmt.Errorf("failed to start monitor: %w", err)
-		}
-
-		result.Subscription = stoppedSub
-
-		// Trigger gap scan if requested
-		if scanGap && result.GapStart > 0 && result.GapEnd > result.GapStart {
-			result.GapScanning = true
-			go func() {
-				m.logger.Info().
-					Str("subscriptionId", stoppedSub.SubscriptionID).
-					Int64("startBlock", result.GapStart).
-					Int64("endBlock", result.GapEnd).
-					Msg("Starting background gap scan")
-
-				if err := m.ScanHistorical(stoppedSub.SubscriptionID, result.GapStart, result.GapEnd); err != nil {
-					m.logger.Error().
-						Err(err).
-						Str("subscriptionId", stoppedSub.SubscriptionID).
-						Msg("Gap scan failed")
-				} else {
-					m.logger.Info().
-						Str("subscriptionId", stoppedSub.SubscriptionID).
-						Msg("Gap scan completed successfully")
-				}
-			}()
-		}
-	} else {
-		// No previous subscription - create new one
-		sub, err := m.Subscribe(address, webhookURL, filters, -1) // -1 = current block
-		if err != nil {
-			return nil, err
-		}
-		result.Subscription = sub
-		result.GapDetected = false
-	}
-
-	return result, nil
+	return nil
 }
 
 // UpdateSubscription changes the filters, wallet type, user ID, label and metadata of
@@ -455,9 +390,10 @@ func (m *Manager) GetByAddress(address string) (*models.Subscription, error) {
 		return nil, err
 	}
 	if len(subs) == 0 {
-		return nil, fmt.Errorf("subscription not found for address: %s", address)
+		return nil, fmt.Errorf("%w for address: %s", ErrSubscriptionNotFound, address)
 	}
-	// Return the first active subscription for this address
+	// Return the newest active subscription for this address, else the newest row
+	// (FindByAddress returns the newest first)
 	for _, sub := range subs {
 		if sub.Status == "active" {
 			return sub, nil
@@ -745,7 +681,9 @@ func (m *Manager) ScanHistorical(subscriptionID string, fromBlock, toBlock int64
 		}
 
 		// Update subscription stats
-		m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, subscriptionID)
+		if err := m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, subscriptionID); err != nil {
+			m.logger.Warn().Err(err).Str("subscriptionId", subscriptionID).Msg("Failed to count historical event")
+		}
 
 		m.logger.Debug().
 			Str("subscriptionId", subscriptionID).

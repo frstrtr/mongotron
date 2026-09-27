@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/frstrtr/mongotron/internal/storage/models"
@@ -107,9 +108,12 @@ type BulkFailure struct {
 // ResubscribeRequest represents a request to resubscribe an address
 type ResubscribeRequest struct {
 	Address    string     `json:"address" validate:"required"`
-	WalletType WalletType `json:"walletType,omitempty"`
-	WebhookURL string     `json:"webhookUrl,omitempty"`
-	ScanGap    bool       `json:"scanGap"` // Whether to scan for missed transactions during unsubscribed period
+	WalletType WalletType `json:"walletType,omitempty"` // Replaces the stored wallet type when set
+	WebhookURL string     `json:"webhookUrl,omitempty"` // Used on reactivation or creation; empty keeps the stored URL
+	// AssetTypes overrides the stored asset types (e.g. ["TRX", "TRC20"]; an empty
+	// list means all transfer types). Omitted keeps the address's stored filters.
+	AssetTypes []string `json:"assetTypes,omitempty"`
+	ScanGap    bool     `json:"scanGap"` // Whether to scan for missed transactions during unsubscribed period
 }
 
 // ResubscribeResponse represents the response for a resubscription
@@ -123,6 +127,18 @@ type ResubscribeResponse struct {
 	GapBlocks      int64  `json:"gapBlocks,omitempty"`
 	GapScanning    bool   `json:"gapScanning"` // True if background gap scan was started
 	Message        string `json:"message"`
+	// Action is "refreshed" (an active subscription was updated in place),
+	// "reactivated" (the latest stopped subscription was reactivated) or
+	// "created" (the address was never watched).
+	Action     string     `json:"action"`
+	WalletType WalletType `json:"walletType"`
+	// AssetTypes and Filters are the settings the subscription now applies, as in
+	// the watchlist rows. AssetTypes is always present (empty means all types).
+	AssetTypes []string                   `json:"assetTypes"`
+	Filters    models.SubscriptionFilters `json:"filters"`
+	// MonitorStarted is true when an active subscription had no running monitor
+	// and one was started.
+	MonitorStarted bool `json:"monitorStarted,omitempty"`
 }
 
 // AddToWatchList handles POST /api/v1/watchlist
@@ -220,12 +236,7 @@ func (h *WatchListHandler) upsertWatch(req WatchAddressRequest, webhookURL strin
 // resolveWatchUpdate computes the desired state of an existing subscription from a
 // watchlist request, keeping stored values for omitted fields (see upsertWatch).
 func resolveWatchUpdate(existing *models.Subscription, req WatchAddressRequest) subscription.SubscriptionUpdate {
-	filters := existing.Filters
-	if req.AssetTypes != nil {
-		filters.ContractTypes = subscription.ContractTypesForAssets(req.AssetTypes)
-		filters.AssetTypes = req.AssetTypes
-		filters.OnlySuccess = true
-	}
+	filters := subscription.WithAssetTypes(existing.Filters, req.AssetTypes)
 	if req.TokenFilter != nil {
 		filters.TokenFilter = req.TokenFilter
 	}
@@ -282,12 +293,6 @@ func toWatchListResponse(sub *models.Subscription) WatchListResponse {
 		Metadata:       sub.Metadata,
 		CreatedAt:      sub.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
-}
-
-// buildContractTypes returns the contract types to monitor based on asset types.
-// Kept as a thin alias: the mapping lives in the subscription package.
-func buildContractTypes(assetTypes []string) []string {
-	return subscription.ContractTypesForAssets(assetTypes)
 }
 
 // isValidWalletType checks if the wallet type is valid
@@ -378,7 +383,9 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 }
 
 // RemoveFromWatchList handles DELETE /api/v1/watchlist/:address
-// Removes an address from the watch list
+// Stops watching an address. It is idempotent: when the address has no active
+// subscription but was watched before, the answer is 200 with status "stopped"
+// (message "Address already stopped"); 404 only when it was never watched.
 func (h *WatchListHandler) RemoveFromWatchList(c *fiber.Ctx) error {
 	address := c.Params("address")
 	if address == "" {
@@ -388,12 +395,31 @@ func (h *WatchListHandler) RemoveFromWatchList(c *fiber.Ctx) error {
 		})
 	}
 
-	// Find subscription by address
+	// Serialised with the watchlist upsert and resubscribe for the same reason
+	h.upsertMu.Lock()
+	defer h.upsertMu.Unlock()
+
+	// GetByAddress returns the active subscription when there is one
 	sub, err := h.manager.GetByAddress(address)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(ErrorResponse{
-			Error:   "not_found",
-			Message: "Address not found in watch list",
+		if errors.Is(err, subscription.ErrSubscriptionNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(ErrorResponse{
+				Error:   "not_found",
+				Message: "Address not found in watch list",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
+			Error:   "lookup_failed",
+			Message: err.Error(),
+		})
+	}
+
+	if sub.Status != "active" {
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"message":        "Address already stopped",
+			"address":        address,
+			"subscriptionId": sub.SubscriptionID,
+			"status":         sub.Status,
 		})
 	}
 
@@ -406,13 +432,19 @@ func (h *WatchListHandler) RemoveFromWatchList(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Address removed from watch list",
-		"address": address,
+		"message":        "Address removed from watch list",
+		"address":        address,
+		"subscriptionId": sub.SubscriptionID,
+		"status":         "stopped",
 	})
 }
 
 // ResubscribeToWatchList handles POST /api/v1/watchlist/:address/resubscribe
-// Resubscribes a previously unsubscribed address and optionally scans for missed transactions
+// Resubscribes a previously unsubscribed address and optionally scans for missed transactions.
+//
+// It never creates a second active subscription: when the address is already
+// active, that subscription is refreshed in place. The stored filters of the
+// address are kept unless the body gives assetTypes. See Manager.Resubscribe.
 func (h *WatchListHandler) ResubscribeToWatchList(c *fiber.Ctx) error {
 	address := c.Params("address")
 	if address == "" {
@@ -442,14 +474,24 @@ func (h *WatchListHandler) ResubscribeToWatchList(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create filters for TRC20 monitoring
-	filters := models.SubscriptionFilters{
-		ContractTypes: []string{"TriggerSmartContract"},
-		OnlySuccess:   true,
+	if req.WalletType != "" && !isValidWalletType(req.WalletType) {
+		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
+			Error:   "invalid_wallet_type",
+			Message: "Invalid wallet type. Must be one of: platform, nps, portal, exchange, gasstation, invoice, general",
+		})
 	}
 
-	// Call resubscribe which handles gap detection and scanning
-	result, err := h.manager.Resubscribe(req.Address, req.WebhookURL, filters, req.ScanGap)
+	// Serialised with the watchlist upsert so a concurrent add cannot create a
+	// second active subscription for the address
+	h.upsertMu.Lock()
+	result, err := h.manager.Resubscribe(subscription.ResubscribeOptions{
+		Address:    req.Address,
+		WebhookURL: req.WebhookURL,
+		AssetTypes: req.AssetTypes,
+		WalletType: string(req.WalletType),
+		ScanGap:    req.ScanGap,
+	})
+	h.upsertMu.Unlock()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
 			Error:   "resubscribe_failed",
@@ -457,28 +499,51 @@ func (h *WatchListHandler) ResubscribeToWatchList(c *fiber.Ctx) error {
 		})
 	}
 
+	row := toWatchListResponse(result.Subscription)
 	response := ResubscribeResponse{
-		SubscriptionID: result.Subscription.SubscriptionID,
-		Address:        result.Subscription.Address,
-		Status:         result.Subscription.Status,
+		SubscriptionID: row.SubscriptionID,
+		Address:        row.Address,
+		Status:         row.Status,
 		GapDetected:    result.GapDetected,
 		GapStart:       result.GapStart,
 		GapEnd:         result.GapEnd,
 		GapBlocks:      result.GapEnd - result.GapStart,
 		GapScanning:    result.GapScanning,
-	}
-
-	if result.GapDetected {
-		if result.GapScanning {
-			response.Message = "Resubscribed successfully. Background scan started to recover missed transactions."
-		} else {
-			response.Message = "Resubscribed successfully. Gap detected but scan not requested."
-		}
-	} else {
-		response.Message = "New subscription created (no previous subscription found)."
+		Message:        resubscribeMessage(result),
+		Action:         result.Action,
+		WalletType:     row.WalletType,
+		AssetTypes:     row.AssetTypes,
+		Filters:        row.Filters,
+		MonitorStarted: result.MonitorStarted,
 	}
 
 	return c.Status(fiber.StatusOK).JSON(response)
+}
+
+// resubscribeMessage describes a resubscribe result for humans.
+func resubscribeMessage(result *subscription.ResubscribeResult) string {
+	switch result.Action {
+	case subscription.ResubscribeCreated:
+		return "New subscription created (no previous subscription found)."
+	case subscription.ResubscribeRefreshed:
+		switch {
+		case result.GapScanning:
+			return "Already subscribed; settings refreshed in place. Background scan started to recover transactions missed before this subscription started."
+		case result.GapDetected:
+			return "Already subscribed; settings refreshed in place. Gap detected but scan not requested."
+		default:
+			return "Already subscribed; settings refreshed in place. No gap to recover."
+		}
+	default:
+		switch {
+		case result.GapScanning:
+			return "Resubscribed successfully. Background scan started to recover missed transactions."
+		case result.GapDetected:
+			return "Resubscribed successfully. Gap detected but scan not requested."
+		default:
+			return "Resubscribed successfully. No gap recorded."
+		}
+	}
 }
 
 // GetWatchList handles GET /api/v1/watchlist

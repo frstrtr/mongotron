@@ -75,9 +75,10 @@ func (r *SubscriptionRepository) FindBySubscriptionID(ctx context.Context, subsc
 	return &subscription, nil
 }
 
-// FindByAddress finds subscriptions by address
+// FindByAddress finds subscriptions by address, newest first
 func (r *SubscriptionRepository) FindByAddress(ctx context.Context, address string) ([]*models.Subscription, error) {
-	cursor, err := r.collection.Find(ctx, bson.M{"address": address})
+	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
+	cursor, err := r.collection.Find(ctx, bson.M{"address": address}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find subscriptions: %w", err)
 	}
@@ -119,7 +120,7 @@ func (r *SubscriptionRepository) List(ctx context.Context, limit, skip int64) ([
 	opts := options.Find().
 		SetLimit(limit).
 		SetSkip(skip).
-		SetSort(bson.D{{"created_at", -1}})
+		SetSort(bson.D{{Key: "created_at", Value: -1}})
 
 	cursor, err := r.collection.Find(ctx, bson.M{}, opts)
 	if err != nil {
@@ -225,11 +226,36 @@ func (r *SubscriptionRepository) UpdateStatusWithBlock(ctx context.Context, id p
 			"stopped_at":      now,
 			"updated_at":      now,
 		},
+		// A new stop opens a new gap that has not been scanned yet
+		"$unset": bson.M{"gap_scanned_at": ""},
 	}
 
 	result, err := r.collection.UpdateOne(ctx, bson.M{"_id": id}, update)
 	if err != nil {
 		return fmt.Errorf("failed to update subscription status: %w", err)
+	}
+
+	if result.MatchedCount == 0 {
+		return fmt.Errorf("subscription not found")
+	}
+
+	return nil
+}
+
+// MarkGapScanned records that the gap after this (stopped) subscription was handed
+// to a historical scan, so a later resubscribe does not scan it again.
+func (r *SubscriptionRepository) MarkGapScanned(ctx context.Context, id primitive.ObjectID) error {
+	now := time.Now()
+	update := bson.M{
+		"$set": bson.M{
+			"gap_scanned_at": now,
+			"updated_at":     now,
+		},
+	}
+
+	result, err := r.collection.UpdateOne(ctx, bson.M{"_id": id}, update)
+	if err != nil {
+		return fmt.Errorf("failed to mark gap scanned: %w", err)
 	}
 
 	if result.MatchedCount == 0 {
@@ -297,17 +323,17 @@ func (r *SubscriptionRepository) Delete(ctx context.Context, id primitive.Object
 func (r *SubscriptionRepository) CreateIndexes(ctx context.Context) error {
 	indexes := []mongo.IndexModel{
 		{
-			Keys:    bson.D{{"subscription_id", 1}},
+			Keys:    bson.D{{Key: "subscription_id", Value: 1}},
 			Options: options.Index().SetUnique(true),
 		},
 		{
-			Keys: bson.D{{"address", 1}},
+			Keys: bson.D{{Key: "address", Value: 1}},
 		},
 		{
-			Keys: bson.D{{"status", 1}},
+			Keys: bson.D{{Key: "status", Value: 1}},
 		},
 		{
-			Keys: bson.D{{"created_at", -1}},
+			Keys: bson.D{{Key: "created_at", Value: -1}},
 		},
 	}
 

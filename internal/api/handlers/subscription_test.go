@@ -14,6 +14,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // MockSubscriptionManager is a mock implementation of subscription.Manager
@@ -58,8 +59,8 @@ func (m *MockSubscriptionManager) Unsubscribe(subscriptionID string) error {
 	return args.Error(0)
 }
 
-func (m *MockSubscriptionManager) Resubscribe(address string, webhookURL string, filters models.SubscriptionFilters, scanGap bool) (*subscription.ResubscribeResult, error) {
-	args := m.Called(address, webhookURL, filters, scanGap)
+func (m *MockSubscriptionManager) Resubscribe(opts subscription.ResubscribeOptions) (*subscription.ResubscribeResult, error) {
+	args := m.Called(opts)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -172,7 +173,7 @@ func TestCreateSubscription_Success(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response SubscriptionResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "sub_test123", response.SubscriptionID)
 	assert.Equal(t, "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf", response.Address)
@@ -207,7 +208,7 @@ func TestCreateSubscription_MissingAddress(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	// An empty address is allowed only with a contract-type filter (monitor-all mode),
 	// so a bare empty address is rejected as an invalid request.
@@ -249,7 +250,7 @@ func TestGetSubscription_Success(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response SubscriptionResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "sub_test123", response.SubscriptionID)
 	assert.Equal(t, int64(5), response.EventsCount)
@@ -318,7 +319,7 @@ func TestListSubscriptions_Success(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response ListSubscriptionsResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, int64(2), response.Total)
 	assert.Len(t, response.Subscriptions, 2)
@@ -348,7 +349,7 @@ func TestListSubscriptions_WithPagination(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response ListSubscriptionsResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, int64(50), response.Total)
 	assert.Equal(t, int64(10), response.Limit)
@@ -378,7 +379,7 @@ func TestDeleteSubscription_Success(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response map[string]interface{}
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, true, response["success"])
 
@@ -460,7 +461,7 @@ func TestCreateSubscription_WithFilters(t *testing.T) {
 	// Parse response
 	body, _ := io.ReadAll(resp.Body)
 	var response SubscriptionResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "sub_test123", response.SubscriptionID)
 	assert.Len(t, response.Filters.ContractTypes, 2)
@@ -551,7 +552,7 @@ func TestCreateSubscription_DatabaseError(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "subscription_failed", response.Error)
 	assert.Contains(t, response.Message, "database connection failed")
@@ -595,7 +596,7 @@ func TestListSubscriptions_ManagerError(t *testing.T) {
 
 	body, _ := io.ReadAll(resp.Body)
 	var response ErrorResponse
-	json.Unmarshal(body, &response)
+	require.NoError(t, json.Unmarshal(body, &response))
 
 	assert.Equal(t, "list_failed", response.Error)
 
