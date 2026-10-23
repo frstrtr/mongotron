@@ -55,7 +55,7 @@ func TestLoadFileExpandsWebhookSecretsFromEnv(t *testing.T) {
 	path := writeConfig(t, t.TempDir(), "explicit.yaml", testYAML)
 	t.Setenv("TEST_MT_SECRET", "porto-secret")
 	t.Setenv("TEST_MT_SUB_SECRET", "sub-secret")
-	t.Setenv("TEST_MT_PORTO_URL", "http://192.168.100.3:8000")
+	t.Setenv("TEST_MT_PORTO_URL", "http://203.0.113.10:8000")
 
 	cfg, err := LoadFile(path)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestLoadFileExpandsWebhookSecretsFromEnv(t *testing.T) {
 		t.Errorf("ConfigFile = %q, want %q", cfg.ConfigFile, path)
 	}
 	p := cfg.Webhooks.Porto
-	if !p.Enabled || p.BaseURL != "http://192.168.100.3:8000" || p.WebhookSecret != "porto-secret" {
+	if !p.Enabled || p.BaseURL != "http://203.0.113.10:8000" || p.WebhookSecret != "porto-secret" {
 		t.Errorf("unexpected porto config: %+v", p)
 	}
 	if p.OperationPath != "/v1/webhooks/mongotron/operation" || p.Network != "tron-nile" {
@@ -146,12 +146,12 @@ func TestRepoConfigsTakeWebhookSecretFromEnv(t *testing.T) {
 			}
 
 			t.Setenv("MONGOTRON_WEBHOOK_SECRET", "from-env")
-			t.Setenv("PORTO_API_URL", "http://192.168.100.3:8000")
+			t.Setenv("PORTO_API_URL", "http://203.0.113.10:8000")
 			cfg, err = LoadFile(path)
 			if err != nil {
 				t.Fatalf("LoadFile(%s): %v", path, err)
 			}
-			if cfg.Webhooks.Porto.WebhookSecret != "from-env" || cfg.Webhooks.Porto.BaseURL != "http://192.168.100.3:8000" {
+			if cfg.Webhooks.Porto.WebhookSecret != "from-env" || cfg.Webhooks.Porto.BaseURL != "http://203.0.113.10:8000" {
 				t.Fatalf("%s: env values not applied: url=%q", name, cfg.Webhooks.Porto.BaseURL)
 			}
 			if cfg.Webhooks.Porto.OperationPath != "/v1/webhooks/mongotron/operation" {

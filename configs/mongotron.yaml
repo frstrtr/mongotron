@@ -67,7 +67,7 @@ webhooks:
   # Porto API Integration for USDT/TRC20 transfer monitoring
   porto:
     enabled: true
-    # Porto API base URL, e.g. PORTO_API_URL=http://192.168.100.3:8000 (use an IP or a name
+    # Porto API base URL, e.g. PORTO_API_URL=http://porto.example.com:8000 (use an IP or a name
     # this host can resolve). Unset = transfer events are not delivered (logged at startup).
     baseUrl: "${PORTO_API_URL}"
     webhookPath: "/v1/webhooks/mongotron/transfer"

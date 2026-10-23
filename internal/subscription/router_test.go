@@ -79,9 +79,9 @@ func TestShouldSendSubscriptionWebhook(t *testing.T) {
 		want bool
 	}{
 		{"", false},
-		{"http://oplex7020:8000/v1/webhooks/mongotron/transfer", false},
-		{"http://192.168.100.3:43069/v1/webhooks/mongotron/transfer", false},
-		{"http://oplex7020:8000/v1/webhooks/mongotron/operation", false},
+		{"http://porto-host:8000/v1/webhooks/mongotron/transfer", false},
+		{"http://203.0.113.10:43069/v1/webhooks/mongotron/transfer", false},
+		{"http://porto-host:8000/v1/webhooks/mongotron/operation", false},
 		{"https://merchant.example.com/tron/events", true},
 	}
 	for _, c := range cases {
@@ -167,7 +167,7 @@ func usdtTransferRequest(watched string) *RouteEventRequest {
 			Address:        watched,
 			WalletType:     "invoice",
 			UserID:         "invoice_42",
-			WebhookURL:     "http://192.168.100.3:43069/v1/webhooks/mongotron/transfer",
+			WebhookURL:     "http://203.0.113.10:43069/v1/webhooks/mongotron/transfer",
 		},
 		Event: &monitor.AddressEvent{
 			BlockNumber:    68900000,

@@ -106,13 +106,13 @@ func TestSetSignatureHeaders(t *testing.T) {
 
 func TestIsPortoWebhookURL(t *testing.T) {
 	cases := map[string]bool{
-		"http://oplex7020:8000/v1/webhooks/mongotron/transfer":      true,
-		"http://192.168.100.3:43069/v1/webhooks/mongotron/transfer": true,
-		"https://api.example.com/v1/webhooks/mongotron/operation":   true,
-		"https://proxy.example.com/porto/v1/webhooks/mongotron/x":   true,
-		"http://localhost:8000/v1/webhooks/mongotron/transfer?x=1":  true,
-		"https://merchant.example.com/hooks/tron":                   false,
-		"https://example.com/v1/webhooks/other/transfer":            false,
+		"http://porto-host:8000/v1/webhooks/mongotron/transfer":    true,
+		"http://203.0.113.10:43069/v1/webhooks/mongotron/transfer": true,
+		"https://api.example.com/v1/webhooks/mongotron/operation":  true,
+		"https://proxy.example.com/porto/v1/webhooks/mongotron/x":  true,
+		"http://localhost:8000/v1/webhooks/mongotron/transfer?x=1": true,
+		"https://merchant.example.com/hooks/tron":                  false,
+		"https://example.com/v1/webhooks/other/transfer":           false,
 		"": false,
 	}
 	for u, want := range cases {
