@@ -81,7 +81,7 @@ All scenarios now show **single deletion with 200 OK status**.
 
 ## Documentation
 
-Full technical details in: `BUGFIX_DOUBLE_DELETION.md`
+Full technical details in: [`BUGFIX_DOUBLE_DELETION.md`](BUGFIX_DOUBLE_DELETION.md)
 
 ## Date
 October 5, 2025

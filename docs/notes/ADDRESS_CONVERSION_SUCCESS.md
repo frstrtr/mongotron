@@ -84,10 +84,10 @@ cd /home/user0/Github/mongotron
 source venv/bin/activate
 
 # Test address conversion
-python test_address_display.py
+python examples/python/test_address_display.py
 
 # Run live monitor
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 ## Current System Status
@@ -142,7 +142,7 @@ To see it in action with live events:
 ```bash
 cd /home/user0/Github/mongotron
 source venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 The monitor will:

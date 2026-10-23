@@ -164,7 +164,7 @@ cd /home/user0/Github/mongotron
 source .venv/bin/activate
 
 # Monitor USDT transfers on Nile testnet
-python event_monitor.py
+python examples/python/event_monitor.py
 
 # The monitor will:
 # - Create a subscription for TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf (USDT)
@@ -370,7 +370,7 @@ tail -20 /tmp/api-server.log
 
 # 8. Start monitoring (in new terminal)
 source .venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 ## System Architecture
@@ -423,7 +423,7 @@ After starting MongoTron:
 | **Check Health** | `curl http://localhost:8080/health` |
 | **List Subscriptions** | `curl http://localhost:8080/api/v1/subscriptions \| jq .` |
 | **View Events** | `curl http://localhost:8080/api/v1/events \| jq .` |
-| **Start Monitor** | `python event_monitor.py` |
+| **Start Monitor** | `python examples/python/event_monitor.py` |
 
 ## Support
 

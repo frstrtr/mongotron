@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Test address conversion with real event data"""
 
+import os
 import sys
-sys.path.insert(0, '/home/user0/Github/mongotron')
+# event_monitor.py lives next to this script
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from event_monitor import hex_to_tron_address
 
 # Real addresses from the captured event

@@ -25,7 +25,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 2. Install dependencies:
 ```bash
-pip install -r requirements.txt
+pip install -r examples/python/requirements.txt
 ```
 
 ## Usage
@@ -34,15 +34,15 @@ pip install -r requirements.txt
 
 Run tests against local server (default: http://localhost:8080):
 ```bash
-python test_client.py
+python examples/python/test_client.py
 ```
 
 ### Custom Base URL
 
 Test against a different server:
 ```bash
-python test_client.py http://staging-server:8080
-python test_client.py https://api.mongotron.io
+python examples/python/test_client.py http://staging-server:8080
+python examples/python/test_client.py https://api.mongotron.io
 ```
 
 ## Test Categories
@@ -179,7 +179,7 @@ curl http://localhost:8080/api/v1/health
 source venv/bin/activate
 
 # Reinstall dependencies
-pip install -r requirements.txt
+pip install -r examples/python/requirements.txt
 ```
 
 ### WebSocket Connection Failed
@@ -190,7 +190,7 @@ pip install -r requirements.txt
 
 ## Known Issues
 
-1. **Delete Subscription Test**: May cause server panic due to WebSocket cleanup bug (see TEST_RESULTS.md)
+1. **Delete Subscription Test**: May cause server panic due to WebSocket cleanup bug (see [TEST_RESULTS.md](../notes/TEST_RESULTS.md))
 
 ## Contributing
 

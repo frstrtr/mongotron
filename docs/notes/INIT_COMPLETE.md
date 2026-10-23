@@ -62,9 +62,9 @@ The MongoTron project structure has been fully initialized according to the READ
 #### Documentation
 - ✅ `README.md` - Comprehensive project documentation
 - ✅ `LICENSE` - MIT License
-- ✅ `docs/api/README.md` - API documentation
-- ✅ `docs/deployment/README.md` - Deployment guide
-- ✅ `docs/performance/README.md` - Performance tuning guide
+- ✅ [`docs/reference/API.md`](../reference/API.md) - API documentation
+- ✅ [`docs/guides/DEPLOYMENT.md`](../guides/DEPLOYMENT.md) - Deployment guide
+- ✅ [`docs/guides/PERFORMANCE_TUNING.md`](../guides/PERFORMANCE_TUNING.md) - Performance tuning guide
 - ✅ `.gitignore` - Git ignore rules
 
 #### Test Files
@@ -165,10 +165,10 @@ make deploy-prod
 
 ## 📚 Documentation
 
-- **Main README**: [README.md](../README.md)
-- **API Docs**: [docs/api/README.md](../docs/api/README.md)
-- **Deployment Guide**: [docs/deployment/README.md](../docs/deployment/README.md)
-- **Performance Tuning**: [docs/performance/README.md](../docs/performance/README.md)
+- **Main README**: [README.md](../../README.md)
+- **API Docs**: [docs/reference/API.md](../reference/API.md)
+- **Deployment Guide**: [docs/guides/DEPLOYMENT.md](../guides/DEPLOYMENT.md)
+- **Performance Tuning**: [docs/guides/PERFORMANCE_TUNING.md](../guides/PERFORMANCE_TUNING.md)
 
 ## 🎯 Project Goals Achieved
 

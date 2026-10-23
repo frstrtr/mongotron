@@ -14,7 +14,7 @@ When monitoring events, you'll see **complete smart contract information** inclu
 ```bash
 # Start monitoring
 source .venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 ## Example Output
@@ -70,7 +70,7 @@ python event_monitor.py
 
 ```bash
 # Display recent events with decoding
-python test_smart_contract_display.py
+python examples/python/test_smart_contract_display.py
 ```
 
 ## API Access
@@ -94,9 +94,9 @@ curl http://localhost:8080/api/v1/events?limit=1 | jq '.events[0].data.eventData
 
 ## Documentation
 
-📖 Full guide: `SMART_CONTRACT_DECODING_MONITOR.md`  
-📋 Summary: `ENHANCED_MONITOR_SUMMARY.md`  
-🚀 Implementation: `ABI_DECODING_IMPLEMENTATION.md`  
+📖 Full guide: [`SMART_CONTRACT_DECODING_MONITOR.md`](SMART_CONTRACT_DECODING_MONITOR.md)  
+📋 Summary: [`ENHANCED_MONITOR_SUMMARY.md`](../notes/ENHANCED_MONITOR_SUMMARY.md)  
+🚀 Implementation: [`ABI_DECODING_IMPLEMENTATION.md`](../architecture/ABI_DECODING_IMPLEMENTATION.md)  
 
 ## Status
 

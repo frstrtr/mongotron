@@ -1,8 +1,11 @@
 #!/bin/bash
 # MongoTron Quick Start Script
-# Usage: ./start.sh
+# Usage: ./scripts/start.sh (from any directory)
 
 set -e
+
+# Run from the repository root (this script lives in scripts/)
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 echo "╔══════════════════════════════════════════════════════════════════════════════╗"
 echo "║                                                                              ║"
@@ -12,7 +15,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # Check if we're in the right directory
-if [ ! -f "event_monitor.py" ]; then
+if [ ! -f "examples/python/event_monitor.py" ]; then
     echo "❌ Error: Please run this script from the mongotron directory"
     exit 1
 fi
@@ -53,11 +56,11 @@ echo ""
 echo "To start monitoring, run:"
 echo ""
 echo "   source .venv/bin/activate"
-echo "   python event_monitor.py"
+echo "   python examples/python/event_monitor.py"
 echo ""
 echo "Or check the status with:"
 echo ""
 echo "   curl http://localhost:8080/api/v1/subscriptions | jq ."
 echo ""
-echo "📚 Documentation: See QUICK_START.md, STARTUP_GUIDE.md, or HOW_TO_START.md"
+echo "📚 Documentation: See docs/guides/QUICK_START.md, docs/guides/STARTUP_GUIDE.md, or docs/guides/HOW_TO_START.md"
 echo ""

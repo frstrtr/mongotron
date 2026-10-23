@@ -28,7 +28,7 @@ telegram-bot/
 
 ### 2. Configure the Bot
 ```bash
-cd telegram-bot
+cd examples/telegram-bot
 cp .env.example .env
 nano .env  # Add your bot token
 ```
@@ -406,7 +406,7 @@ Edit `monitor_address()` function in `bot.py`
 Your Telegram bot is ready to monitor the Tron blockchain!
 
 ```bash
-cd telegram-bot
+cd examples/telegram-bot
 ./start.sh
 ```
 

@@ -26,7 +26,7 @@
 - Webhook notifications
 - Production-ready with rate limiting
 
-See [API_SERVER_README.md](API_SERVER_README.md) for complete API documentation.
+See [API_SERVER_README.md](docs/reference/API_SERVER_README.md) for complete API documentation.
 
 ### Key Performance Metrics
 - **🚀 Ultra-Low Latency**: 3-second polling interval for near real-time detection
@@ -293,7 +293,7 @@ make test
 make run
 ```
 
-📚 **Detailed Documentation**: See [docs/INSTALL_SCRIPT.md](docs/INSTALL_SCRIPT.md) for complete installation guide.
+📚 **Detailed Documentation**: See [docs/guides/INSTALL_SCRIPT.md](docs/guides/INSTALL_SCRIPT.md) for complete installation guide.
 
 ### Manual Installation
 
@@ -377,7 +377,7 @@ make build
 For production deployment with ZFS on NVMe for optimal performance:
 
 ```bash
-# See INFRASTRUCTURE.md for complete setup guide
+# See docs/guides/INFRASTRUCTURE.md for complete setup guide
 
 # Quick setup on remote VM:
 # 1. Create ZFS pool on NVMe
@@ -422,7 +422,7 @@ cd deployments/docker
 docker-compose up -d
 ```
 
-📚 **Detailed Infrastructure Setup**: See [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) for comprehensive production deployment guide including ZFS optimization, MongoDB configuration, and performance tuning.
+📚 **Detailed Infrastructure Setup**: See [INFRASTRUCTURE.md](docs/guides/INFRASTRUCTURE.md) for comprehensive production deployment guide including ZFS optimization, MongoDB configuration, and performance tuning.
 
 ---
 
@@ -1484,7 +1484,7 @@ mongotron/
 ├── internal/api/handlers/
 │   ├── subscription_test.go    # 9 subscription handler tests
 │   └── health_test.go          # 4 health check tests
-└── test/integration/
+└── tests/integration/api/
     └── api_integration_test.go # 5 integration test suites
 ```
 
@@ -1516,7 +1516,7 @@ mongotron/
 
 **Unit Tests** (fast, no external dependencies):
 ```bash
-./run_tests.sh unit
+./scripts/run_tests.sh unit
 # or
 go test ./internal/api/handlers/...
 ```
@@ -1527,9 +1527,9 @@ go test ./internal/api/handlers/...
 ./bin/mongotron-api
 
 # Terminal 2: Run integration tests
-./run_tests.sh integration
+./scripts/run_tests.sh integration
 # or
-go test ./test/integration/...
+MONGOTRON_INTEGRATION=1 go test ./tests/integration/api/...
 ```
 
 **Coverage Report**:
@@ -1557,7 +1557,7 @@ func TestExample(t *testing.T) {
 }
 ```
 
-For detailed testing documentation, see [TEST_GUIDE.md](TEST_GUIDE.md).
+For detailed testing documentation, see [TEST_GUIDE.md](docs/guides/TEST_GUIDE.md).
 
 ---
 

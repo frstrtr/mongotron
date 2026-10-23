@@ -4,7 +4,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+# Run from the repository root (this script lives in scripts/)
+cd "$SCRIPT_DIR/.."
 
 # Colors
 RED='\033[0;31m'
@@ -46,10 +47,11 @@ case "$TEST_TYPE" in
             exit 1
         fi
         
+        # The package skips itself unless MONGOTRON_INTEGRATION=1
         if [ "$VERBOSE" == "-v" ]; then
-            go test -v ./test/integration/...
+            MONGOTRON_INTEGRATION=1 go test -v ./tests/integration/api/...
         else
-            go test ./test/integration/...
+            MONGOTRON_INTEGRATION=1 go test ./tests/integration/api/...
         fi
         ;;
     

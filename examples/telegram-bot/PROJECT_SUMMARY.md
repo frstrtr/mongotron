@@ -30,7 +30,7 @@ A **complete, production-ready Telegram bot** for monitoring Tron blockchain add
 ## 🚀 Quick Start
 
 ```bash
-cd telegram-bot
+cd examples/telegram-bot
 ./start.sh
 ```
 
@@ -315,10 +315,10 @@ That's it! Only 3 settings needed.
 
 ## 🎉 Ready to Use!
 
-Everything you need is in the `telegram-bot/` folder:
+Everything you need is in the `examples/telegram-bot/` folder:
 
 ```bash
-cd telegram-bot
+cd examples/telegram-bot
 ./start.sh
 ```
 

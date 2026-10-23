@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // MongoTron WebSocket Client Test
-// Usage: node test_websocket.js <subscription_id>
+// Usage: node examples/js/test_websocket.js <subscription_id>
 
 const WebSocket = require('ws');
 
 const subscriptionId = process.argv[2];
 if (!subscriptionId) {
-  console.error('Usage: node test_websocket.js <subscription_id>');
+  console.error('Usage: node examples/js/test_websocket.js <subscription_id>');
   process.exit(1);
 }
 

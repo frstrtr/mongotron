@@ -103,7 +103,7 @@ For every smart contract transaction:
 ### Python Monitor
 ```bash
 source .venv/bin/activate
-python event_monitor.py --address YOUR_ADDRESS
+python examples/python/event_monitor.py --address YOUR_ADDRESS
 ```
 
 ### MVP Monitor (Go)
@@ -117,7 +117,7 @@ python event_monitor.py --address YOUR_ADDRESS
 
 ### Test Script
 ```bash
-python test_smart_contract_display.py
+python examples/python/test_smart_contract_display.py
 ```
 
 ## Build Status
@@ -128,10 +128,10 @@ python test_smart_contract_display.py
 
 ## Documentation
 
-1. **SMART_CONTRACT_DECODING_MONITOR.md** - Python monitor details
-2. **MVP_SMART_CONTRACT_DECODING.md** - Go MVP monitor details
-3. **ENHANCED_MONITOR_SUMMARY.md** - Overall implementation summary
-4. **SMART_CONTRACT_QUICK_REF.md** - Quick reference guide
+1. **[SMART_CONTRACT_DECODING_MONITOR.md](../reference/SMART_CONTRACT_DECODING_MONITOR.md)** - Python monitor details
+2. **[MVP_SMART_CONTRACT_DECODING.md](MVP_SMART_CONTRACT_DECODING.md)** - Go MVP monitor details
+3. **[ENHANCED_MONITOR_SUMMARY.md](ENHANCED_MONITOR_SUMMARY.md)** - Overall implementation summary
+4. **[SMART_CONTRACT_QUICK_REF.md](../reference/SMART_CONTRACT_QUICK_REF.md)** - Quick reference guide
 
 ## Verification
 

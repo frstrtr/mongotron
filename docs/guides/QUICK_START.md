@@ -23,7 +23,7 @@ curl http://localhost:8080/api/v1/subscriptions | jq '.subscriptions[] | select(
 ```bash
 cd /home/user0/Github/mongotron
 source .venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 **What you'll see**:
@@ -111,13 +111,13 @@ curl -X POST http://localhost:8080/api/v1/subscriptions \
 
 ### Monitor a Different Address
 ```bash
-# Edit event_monitor.py line ~454
+# Edit examples/python/event_monitor.py line ~454
 # Change: address = "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf"
 # To: address = "YOUR_TRON_ADDRESS_HERE"
 
 # Then run:
 source .venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 ### Query Events by Block Range
@@ -139,7 +139,7 @@ mongosh "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron" --eval '
 ### Configuration Files
 - **Main Config**: `configs/.env`
 - **YAML Config**: `configs/mongotron.yaml`
-- **Python Requirements**: `requirements.txt`
+- **Python Requirements**: `examples/python/requirements.txt`
 
 ### Key Settings
 ```properties
@@ -192,7 +192,7 @@ source .venv/bin/activate
 python --version
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r examples/python/requirements.txt
 
 # Test connection
 curl http://localhost:8080/api/v1/subscriptions
@@ -203,11 +203,11 @@ curl http://localhost:8080/api/v1/subscriptions
 ## 📚 Documentation
 
 ### Available Guides
-- ✅ **STARTUP_GUIDE.md** - Complete startup procedures
-- ✅ **SERVER_STATUS.md** - Current system status
-- ✅ **ADDRESS_CONVERSION_SUCCESS.md** - Human-readable address feature
-- ✅ **BUGFIX_DOUBLE_DELETION.md** - Recent bug fixes
-- ✅ **EVENT_LOGGING_GUIDE.md** - Event logging details
+- ✅ **[STARTUP_GUIDE.md](STARTUP_GUIDE.md)** - Complete startup procedures
+- ✅ **[SERVER_STATUS.md](../notes/SERVER_STATUS.md)** - Current system status
+- ✅ **[ADDRESS_CONVERSION_SUCCESS.md](../notes/ADDRESS_CONVERSION_SUCCESS.md)** - Human-readable address feature
+- ✅ **[BUGFIX_DOUBLE_DELETION.md](../notes/BUGFIX_DOUBLE_DELETION.md)** - Recent bug fixes
+- ✅ **[EVENT_LOGGING_GUIDE.md](EVENT_LOGGING_GUIDE.md)** - Event logging details
 
 ### Quick Links
 ```bash
@@ -215,10 +215,10 @@ curl http://localhost:8080/api/v1/subscriptions
 ls -1 *.md
 
 # Read startup guide
-cat STARTUP_GUIDE.md
+cat docs/guides/STARTUP_GUIDE.md
 
 # Read server status
-cat SERVER_STATUS.md
+cat docs/notes/SERVER_STATUS.md
 ```
 
 ---
@@ -229,7 +229,7 @@ cat SERVER_STATUS.md
    ```bash
    cd /home/user0/Github/mongotron
    source .venv/bin/activate
-   python event_monitor.py
+   python examples/python/event_monitor.py
    ```
 
 2. **Open Terminal 2** - Trigger a transaction (optional):
@@ -259,7 +259,7 @@ cat SERVER_STATUS.md
 ```bash
 cd /home/user0/Github/mongotron
 source .venv/bin/activate
-nohup python event_monitor.py > /tmp/monitor.log 2>&1 &
+nohup python examples/python/event_monitor.py > /tmp/monitor.log 2>&1 &
 
 # View output
 tail -f /tmp/monitor.log
@@ -291,7 +291,7 @@ Your MongoTron system is **fully operational**:
 ✅ Event monitor ready to use  
 ✅ Human-readable address conversion working  
 
-**Just run**: `python event_monitor.py` to see live events!
+**Just run**: `python examples/python/event_monitor.py` to see live events!
 
 ---
 

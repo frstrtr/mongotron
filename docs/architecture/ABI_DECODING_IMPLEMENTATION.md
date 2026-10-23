@@ -306,7 +306,7 @@ transferFrom(A, B, amount) triggers:
 2. **Monitor your address**:
    ```bash
    source .venv/bin/activate
-   python event_monitor.py --address THpjvxomBhvZUodJ3FHFY1szQxAidxejy8
+   python examples/python/event_monitor.py --address THpjvxomBhvZUodJ3FHFY1szQxAidxejy8
    ```
 
 3. **Send USDT to that address from another wallet**

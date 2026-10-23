@@ -39,7 +39,7 @@ Run the event monitor to see blockchain events in real-time:
 ```bash
 cd /home/user0/Github/mongotron
 source .venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 **What it does**:
@@ -72,7 +72,7 @@ tail -f /tmp/api-server.log
 | Action | Command |
 |--------|---------|
 | **Check Status** | `curl http://localhost:8080/api/v1/subscriptions \| jq .` |
-| **Start Monitor** | `python event_monitor.py` |
+| **Start Monitor** | `python examples/python/event_monitor.py` |
 | **View Logs** | `tail -f /tmp/api-server.log` |
 | **Stop Server** | `pkill -f "bin/api-server"` |
 | **Restart Server** | `pkill -f "bin/api-server" && sleep 2 && nohup ./bin/api-server > /tmp/api-server.log 2>&1 &` |
@@ -83,18 +83,18 @@ tail -f /tmp/api-server.log
 
 For complete details, see:
 
-- **QUICK_START.md** - Quick reference guide (recommended!)
-- **STARTUP_GUIDE.md** - Comprehensive startup procedures
-- **SERVER_STATUS.md** - Current system status
-- **ADDRESS_CONVERSION_SUCCESS.md** - Address display features
+- **[QUICK_START.md](QUICK_START.md)** - Quick reference guide (recommended!)
+- **[STARTUP_GUIDE.md](STARTUP_GUIDE.md)** - Comprehensive startup procedures
+- **[SERVER_STATUS.md](../notes/SERVER_STATUS.md)** - Current system status
+- **[ADDRESS_CONVERSION_SUCCESS.md](../notes/ADDRESS_CONVERSION_SUCCESS.md)** - Address display features
 
 ---
 
 ## 💡 Next Steps
 
 1. ✅ **Server is running** - No action needed
-2. 🎯 **Try the monitor**: Run `python event_monitor.py`
-3. 📊 **Explore the API**: Check the endpoints in STARTUP_GUIDE.md
+2. 🎯 **Try the monitor**: Run `python examples/python/event_monitor.py`
+3. 📊 **Explore the API**: Check the endpoints in [STARTUP_GUIDE.md](STARTUP_GUIDE.md)
 4. 🔍 **Query events**: Use the API or MongoDB directly
 
 ---
@@ -108,7 +108,7 @@ curl http://localhost:8080/api/v1/subscriptions | jq '.total'
 # Terminal 2: Start event monitor
 cd /home/user0/Github/mongotron
 source .venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 
 # Watch live events appear!
 # Events are saved to: events_YYYYMMDD_HHMMSS.log
@@ -141,7 +141,7 @@ python event_monitor.py
 
 Your MongoTron system is **fully operational** and ready to use.
 
-**Just run**: `python event_monitor.py` to see it in action!
+**Just run**: `python examples/python/event_monitor.py` to see it in action!
 
 ---
 

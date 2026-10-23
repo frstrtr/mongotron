@@ -60,7 +60,7 @@ nohup ./bin/api-server > /tmp/api-server.log 2>&1 &
 ```bash
 cd /home/user0/Github/mongotron
 source venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 ## API Endpoints
@@ -98,16 +98,16 @@ All transactions involving this contract are being captured and stored in MongoD
 ## Next Steps
 
 1. ✅ **Server is Running** - No action needed
-2. 📊 **Monitor Events** - Run `python event_monitor.py` to see live events
+2. 📊 **Monitor Events** - Run `python examples/python/event_monitor.py` to see live events
 3. 📈 **View Data** - Check MongoDB for stored events
 4. 🔍 **Analyze** - Query the API for specific events or time ranges
 
 ## Documentation
 
 For detailed information, see:
-- `STARTUP_GUIDE.md` - Complete startup procedures
-- `ADDRESS_CONVERSION_SUCCESS.md` - Event display features
-- `BUGFIX_DOUBLE_DELETION.md` - Recent bug fixes
+- [`STARTUP_GUIDE.md`](../guides/STARTUP_GUIDE.md) - Complete startup procedures
+- [`ADDRESS_CONVERSION_SUCCESS.md`](ADDRESS_CONVERSION_SUCCESS.md) - Event display features
+- [`BUGFIX_DOUBLE_DELETION.md`](BUGFIX_DOUBLE_DELETION.md) - Recent bug fixes
 
 ---
 

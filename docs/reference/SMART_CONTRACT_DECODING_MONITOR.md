@@ -294,13 +294,13 @@ First 4 bytes: 0xa9059cbb → Method signature
 source .venv/bin/activate
 
 # Monitor all events
-python event_monitor.py
+python examples/python/event_monitor.py
 
 # Monitor specific address
-python event_monitor.py --address THpjvxomBhvZUodJ3FHFY1szQxAidxejy8
+python examples/python/event_monitor.py --address THpjvxomBhvZUodJ3FHFY1szQxAidxejy8
 
 # Monitor with filters
-python event_monitor.py --filters '{"onlySuccess": true}'
+python examples/python/event_monitor.py --filters '{"onlySuccess": true}'
 ```
 
 ### What You'll See
@@ -356,7 +356,7 @@ Every smart contract interaction will display:
   - Stores smart contract info in `EventData["smartContract"]`
 
 ### Frontend
-- `event_monitor.py`
+- `examples/python/event_monitor.py`
   - Added `display_smart_contract_info()` function
   - Enhanced `display_transaction_event()` to show decoded data
   - Improved address formatting with base58 conversion
@@ -407,7 +407,7 @@ Send a test USDT transaction and watch the monitor display:
 ```bash
 # Start monitoring
 source .venv/bin/activate
-python event_monitor.py --address YOUR_ADDRESS
+python examples/python/event_monitor.py --address YOUR_ADDRESS
 
 # Send USDT from any wallet
 # Monitor will show:

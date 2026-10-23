@@ -52,7 +52,7 @@ print(readable_addr)  # TVF2Mp9QY7FEGTnr3DBpFLobA6jguHyMvi
 
 ### From Command Line
 ```bash
-python3 event_monitor_fix.py
+python3 archive/event_monitor_fix.py
 ```
 
 ## Integration Status

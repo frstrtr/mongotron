@@ -230,7 +230,7 @@ Full list: [README.md](README.md#features)
 ```bash
 # 1. Get bot token from @BotFather
 # 2. Configure
-cd telegram-bot
+cd examples/telegram-bot
 cp .env.example .env
 nano .env  # Add token
 

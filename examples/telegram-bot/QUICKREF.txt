@@ -2,14 +2,14 @@
 ║                    TELEGRAM BOT QUICK REFERENCE                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
-📍 LOCATION: /home/user0/Github/mongotron/telegram-bot/
+📍 LOCATION: /home/user0/Github/mongotron/examples/telegram-bot/
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚡ QUICK START
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1. Get bot token from @BotFather on Telegram
-2. cd telegram-bot
+2. cd examples/telegram-bot
 3. cp .env.example .env
 4. nano .env  # Add your TELEGRAM_BOT_TOKEN
 5. ./start.sh
@@ -188,7 +188,7 @@ Internet Connection        For Telegram & blockchain
 
 🚀 READY TO GO!
 
-cd telegram-bot && ./start.sh
+cd examples/telegram-bot && ./start.sh
 
 Happy monitoring! 🎉
 

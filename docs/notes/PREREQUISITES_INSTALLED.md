@@ -210,10 +210,10 @@ which golangci-lint
    ```
 
 5. **Read Documentation**
-   - Main README: [README.md](README.md)
-   - API Documentation: [docs/api/README.md](docs/api/README.md)
-   - Deployment Guide: [docs/deployment/README.md](docs/deployment/README.md)
-   - Performance Tuning: [docs/performance/README.md](docs/performance/README.md)
+   - Main README: [README.md](../../README.md)
+   - API Documentation: [docs/reference/API.md](../reference/API.md)
+   - Deployment Guide: [docs/guides/DEPLOYMENT.md](../guides/DEPLOYMENT.md)
+   - Performance Tuning: [docs/guides/PERFORMANCE_TUNING.md](../guides/PERFORMANCE_TUNING.md)
 
 ---
 

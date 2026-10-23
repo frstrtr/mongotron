@@ -258,7 +258,7 @@ We welcome contributions! Areas of interest:
 
 ## 📄 License
 
-See [LICENSE](LICENSE) file for details.
+See [LICENSE](../../LICENSE) file for details.
 
 ---
 
@@ -274,15 +274,15 @@ See [LICENSE](LICENSE) file for details.
 ## 📞 Support
 
 - **Issues**: [GitHub Issues](https://github.com/frstrtr/mongotron/issues)
-- **Documentation**: [README.md](README.md)
-- **Changelog**: [CHANGELOG.md](CHANGELOG.md)
+- **Documentation**: [README.md](../../README.md)
+- **Changelog**: [CHANGELOG.md](../../CHANGELOG.md)
 
 ---
 
 ## 🔗 Links
 
 - **Repository**: https://github.com/frstrtr/mongotron
-- **Documentation**: [docs/](docs/)
+- **Documentation**: [docs/](../)
 - **Examples**: See README.md Usage section
 
 ---

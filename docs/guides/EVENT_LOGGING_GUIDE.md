@@ -130,7 +130,7 @@ When you stop the monitor (Ctrl+C), you'll see:
 
 ### Basic Usage (with logging)
 ```bash
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 This will:
@@ -141,12 +141,12 @@ This will:
 
 ### Monitor Specific Address
 ```bash
-python event_monitor.py --address TYourContractAddress123
+python examples/python/event_monitor.py --address TYourContractAddress123
 ```
 
 ### With Filters
 ```bash
-python event_monitor.py --filters '{"event_name": "Transfer"}'
+python examples/python/event_monitor.py --filters '{"event_name": "Transfer"}'
 ```
 
 ### Review Logged Events

@@ -26,7 +26,7 @@
 - ✅ System processing ~20 blocks per minute
 
 **Documentation:**
-- Created `BUGFIX_BLOCK_PROCESSING.md` with full technical details
+- Created [`BUGFIX_BLOCK_PROCESSING.md`](BUGFIX_BLOCK_PROCESSING.md) with full technical details
 
 ---
 
@@ -65,7 +65,7 @@ print(f"📝 Events saved to: {self.log_file}")
 ```
 
 **Documentation:**
-- Created `EVENT_LOGGING_GUIDE.md` with comprehensive usage examples
+- Created [`EVENT_LOGGING_GUIDE.md`](../guides/EVENT_LOGGING_GUIDE.md) with comprehensive usage examples
 
 ---
 
@@ -172,14 +172,14 @@ After Fix:
 
 ### Documentation Created
 
-1. **BUGFIX_BLOCK_PROCESSING.md**
+1. **[BUGFIX_BLOCK_PROCESSING.md](BUGFIX_BLOCK_PROCESSING.md)**
    - Problem analysis
    - Root cause identification
    - Solution implementation
    - Before/after comparison
    - Testing procedures
 
-2. **EVENT_LOGGING_GUIDE.md**
+2. **[EVENT_LOGGING_GUIDE.md](../guides/EVENT_LOGGING_GUIDE.md)**
    - Feature overview
    - Console output formats
    - File logging details
@@ -187,7 +187,7 @@ After Fix:
    - Log file analysis tools
    - Advanced processing examples
 
-3. **EVENT_MONITOR_README.md** (Updated)
+3. **[EVENT_MONITOR_README.md](../guides/EVENT_MONITOR_README.md)** (Updated)
    - Usage instructions
    - Command-line options
    - Event format explanation
@@ -230,7 +230,7 @@ After Fix:
 ```bash
 cd /home/user0/Github/mongotron
 source venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 **Check Status:**

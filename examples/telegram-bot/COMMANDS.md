@@ -3,7 +3,7 @@
 ## Quick Start
 
 ```bash
-cd telegram-bot
+cd examples/telegram-bot
 ./start.sh
 ```
 

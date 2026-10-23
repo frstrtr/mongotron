@@ -224,7 +224,7 @@ cd /home/user0/Github/mongotron
 source venv/bin/activate
 
 # Start monitor
-python event_monitor.py
+python examples/python/event_monitor.py
 
 # Press Ctrl+C after a few seconds
 # Verify: Only one "Subscription deleted" message

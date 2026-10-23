@@ -13,9 +13,9 @@ mongotron/
 │   ├── health_test.go          # Unit tests for health endpoints
 │   ├── subscription.go
 │   └── health.go
-├── test/integration/
+├── tests/integration/api/
 │   └── api_integration_test.go # Integration tests
-├── run_tests.sh                # Test runner script
+├── scripts/run_tests.sh        # Test runner script
 └── Makefile                    # Build and test automation
 ```
 
@@ -47,19 +47,19 @@ make quick
 
 ```bash
 # Run unit tests
-./run_tests.sh unit
+./scripts/run_tests.sh unit
 
 # Run unit tests (verbose)
-./run_tests.sh unit -v
+./scripts/run_tests.sh unit -v
 
 # Run integration tests
-./run_tests.sh integration
+./scripts/run_tests.sh integration
 
 # Generate coverage report
-./run_tests.sh coverage
+./scripts/run_tests.sh coverage
 
 # Run benchmarks
-./run_tests.sh bench
+./scripts/run_tests.sh bench
 ```
 
 ### Using Go Test Directly
@@ -148,10 +148,10 @@ Integration tests require a running API server and test the complete request/res
 make test-integration
 
 # Using test runner
-./run_tests.sh integration
+./scripts/run_tests.sh integration
 
 # Using Go directly
-go test ./test/integration/... -v
+MONGOTRON_INTEGRATION=1 go test ./tests/integration/api/... -v
 ```
 
 ### Skip Integration Tests
@@ -164,7 +164,7 @@ go test -short ./...
 
 ### Integration Test Suites (5 suites)
 
-Located in `test/integration/api_integration_test.go`:
+Located in `tests/integration/api/api_integration_test.go`:
 
 1. **TestAPIIntegration_FullFlow** - Complete lifecycle test:
    - Health check

@@ -13,9 +13,9 @@ nohup ./bin/api-server > /tmp/api-server.log 2>&1 &
 ```bash
 cd /home/user0/Github/mongotron
 source venv/bin/activate
-python event_monitor.py
+python examples/python/event_monitor.py
 # Or in background:
-nohup python event_monitor.py > monitor.log 2>&1 &
+nohup python examples/python/event_monitor.py > monitor.log 2>&1 &
 ```
 
 ### Stop Services
@@ -85,12 +85,12 @@ curl -X DELETE http://localhost:8080/api/v1/subscriptions/sub_abc123
 
 ### Monitor Specific Address
 ```bash
-python event_monitor.py --address TYourAddress123
+python examples/python/event_monitor.py --address TYourAddress123
 ```
 
 ### Monitor with Filters
 ```bash
-python event_monitor.py --filters '{"event_name": "Transfer"}'
+python examples/python/event_monitor.py --filters '{"event_name": "Transfer"}'
 ```
 
 ## 📁 Important Files
@@ -102,7 +102,7 @@ python event_monitor.py --filters '{"event_name": "Transfer"}'
 - `cmd/api-server/main.go` - API server entry point
 - `internal/subscription/manager.go` - Subscription management
 - `internal/blockchain/monitor/address_monitor.go` - Block monitoring
-- `event_monitor.py` - Python monitoring client
+- `examples/python/event_monitor.py` - Python monitoring client
 
 ### Logs
 - `/tmp/api-server.log` - API server logs
@@ -110,10 +110,10 @@ python event_monitor.py --filters '{"event_name": "Transfer"}'
 
 ### Documentation
 - `README.md` - Project overview
-- `SESSION_SUMMARY.md` - Latest session summary
-- `BUGFIX_BLOCK_PROCESSING.md` - Bug fix details
-- `EVENT_LOGGING_GUIDE.md` - Logging guide
-- `EVENT_MONITOR_README.md` - Monitor usage
+- [`SESSION_SUMMARY.md`](../notes/SESSION_SUMMARY.md) - Latest session summary
+- [`BUGFIX_BLOCK_PROCESSING.md`](../notes/BUGFIX_BLOCK_PROCESSING.md) - Bug fix details
+- [`EVENT_LOGGING_GUIDE.md`](../guides/EVENT_LOGGING_GUIDE.md) - Logging guide
+- [`EVENT_MONITOR_README.md`](../guides/EVENT_MONITOR_README.md) - Monitor usage
 
 ## 🔍 Troubleshooting
 
@@ -170,7 +170,7 @@ curl http://localhost:8080/api/v1/ready
 ### Test Event Monitor
 ```bash
 # Run for 30 seconds
-timeout 30 python event_monitor.py
+timeout 30 python examples/python/event_monitor.py
 # Should connect and monitor (may or may not see events)
 ```
 

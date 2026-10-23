@@ -368,7 +368,7 @@ If you're on a non-Ubuntu/Debian system, you can:
 
 1. **Use the script as a reference** - Follow the installation steps manually
 2. **Adapt for your package manager** - Replace `apt` with `yum`, `pacman`, etc.
-3. **Install manually** - See PREREQUISITES_INSTALLED.md for manual steps
+3. **Install manually** - See [PREREQUISITES_INSTALLED.md](../notes/PREREQUISITES_INSTALLED.md) for manual steps
 
 ## Advanced Usage
 

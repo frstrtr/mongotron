@@ -20,7 +20,7 @@ This document summarizes the comprehensive testing infrastructure added to Mongo
   - Service unavailable scenarios
 
 #### Integration Tests
-- **`test/integration/api_integration_test.go`** (~350 lines)
+- **`tests/integration/api/api_integration_test.go`** (~350 lines)
   - 5 major test suites with 8+ sub-tests
   - End-to-end API flow validation
   - Real HTTP request testing
@@ -42,7 +42,7 @@ This document summarizes the comprehensive testing infrastructure added to Mongo
 ### 3. Test Automation Tools
 
 #### Test Runner Script
-- **`run_tests.sh`** (~150 lines)
+- **`scripts/run_tests.sh`** (~150 lines)
   - Unified test execution interface
   - Support for unit, integration, coverage, and bench tests
   - Color-coded output
@@ -60,7 +60,7 @@ This document summarizes the comprehensive testing infrastructure added to Mongo
 ### 4. Documentation
 
 #### Comprehensive Test Guide
-- **`TEST_GUIDE.md`** (~500 lines)
+- **[`TEST_GUIDE.md`](../guides/TEST_GUIDE.md)** (~500 lines)
   - Complete testing documentation
   - How to run tests (3 different methods)
   - Test structure and organization
@@ -174,16 +174,16 @@ make test-integration
 
 ```bash
 # Unit tests
-./run_tests.sh unit
+./scripts/run_tests.sh unit
 
 # Unit tests (verbose)
-./run_tests.sh unit -v
+./scripts/run_tests.sh unit -v
 
 # Integration tests
-./run_tests.sh integration
+./scripts/run_tests.sh integration
 
 # Coverage report
-./run_tests.sh coverage
+./scripts/run_tests.sh coverage
 ```
 
 ### Direct Go Commands
@@ -352,11 +352,11 @@ jobs:
 ### Created Files (7)
 1. `internal/api/handlers/subscription_test.go` - 416 lines
 2. `internal/api/handlers/health_test.go` - 100 lines
-3. `test/integration/api_integration_test.go` - 350 lines
+3. `tests/integration/api/api_integration_test.go` - 350 lines
 4. `internal/subscription/interface.go` - 18 lines
-5. `run_tests.sh` - 150 lines
-6. `TEST_GUIDE.md` - 500 lines
-7. `TEST_IMPLEMENTATION_SUMMARY.md` - This file
+5. `scripts/run_tests.sh` - 150 lines
+6. [`TEST_GUIDE.md`](../guides/TEST_GUIDE.md) - 500 lines
+7. [`TEST_IMPLEMENTATION_SUMMARY.md`](TEST_IMPLEMENTATION_SUMMARY.md) - This file
 
 ### Modified Files (3)
 1. `internal/api/handlers/subscription.go` - Updated to use interface

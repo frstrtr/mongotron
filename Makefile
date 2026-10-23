@@ -58,23 +58,23 @@ test: test-unit
 
 test-unit:
 	@echo "Running unit tests..."
-	@./run_tests.sh unit
+	@./scripts/run_tests.sh unit
 
 test-integration:
 	@echo "Running integration tests..."
-	@./run_tests.sh integration
+	@./scripts/run_tests.sh integration
 
 test-coverage:
 	@echo "Running tests with coverage..."
-	@./run_tests.sh coverage
+	@./scripts/run_tests.sh coverage
 
 test-bench:
 	@echo "Running benchmark tests..."
-	@./run_tests.sh bench
+	@./scripts/run_tests.sh bench
 
 test-verbose:
 	@echo "Running tests (verbose)..."
-	@./run_tests.sh unit -v
+	@./scripts/run_tests.sh unit -v
 
 # Run targets
 run-api: build-api
@@ -110,9 +110,9 @@ lint:
 # Development targets
 dev-setup: deps
 	@echo "Setting up development environment..."
-	@chmod +x run_tests.sh
-	@chmod +x test_api.sh
-	@chmod +x test_websocket.js
+	@chmod +x scripts/run_tests.sh
+	@chmod +x scripts/test_api.sh
+	@chmod +x examples/js/test_websocket.js
 	@echo "✅ Development environment ready"
 
 # Quick test-and-build workflow

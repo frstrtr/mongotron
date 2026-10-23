@@ -13,14 +13,14 @@ A real-time blockchain event monitoring tool that subscribes to contract address
 
 ## Installation
 
-Dependencies are already included in `requirements.txt`:
+Dependencies are already included in `examples/python/requirements.txt`:
 
 ```bash
 # If not already in venv
 source venv/bin/activate
 
 # Dependencies should already be installed
-pip install -r requirements.txt
+pip install -r examples/python/requirements.txt
 ```
 
 ## Usage
@@ -30,7 +30,7 @@ pip install -r requirements.txt
 Monitor the USDT contract on Tron Nile testnet (default):
 
 ```bash
-python event_monitor.py
+python examples/python/event_monitor.py
 ```
 
 **Default Address**: `TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf` (USDT on Tron Nile Testnet)
@@ -38,13 +38,13 @@ python event_monitor.py
 ### Monitor a Specific Address
 
 ```bash
-python event_monitor.py --address TRX9aKj8VrqEJMvM7vvkA2B3wYGpwj5YSj
+python examples/python/event_monitor.py --address TRX9aKj8VrqEJMvM7vvkA2B3wYGpwj5YSj
 ```
 
 ### Connect to Different Server
 
 ```bash
-python event_monitor.py --url http://staging-server:8080
+python examples/python/event_monitor.py --url http://staging-server:8080
 ```
 
 ### With Filters
@@ -52,13 +52,13 @@ python event_monitor.py --url http://staging-server:8080
 Monitor only Transfer events:
 
 ```bash
-python event_monitor.py --filters '{"event_name": "Transfer"}'
+python examples/python/event_monitor.py --filters '{"event_name": "Transfer"}'
 ```
 
 Monitor only successful transactions:
 
 ```bash
-python event_monitor.py --filters '{"onlySuccess": true}'
+python examples/python/event_monitor.py --filters '{"onlySuccess": true}'
 ```
 
 ## Command Line Options
@@ -163,12 +163,12 @@ Filters can be provided as JSON:
 
 Only Transfer events:
 ```bash
-python event_monitor.py --filters '{"event_name": "Transfer"}'
+python examples/python/event_monitor.py --filters '{"event_name": "Transfer"}'
 ```
 
 Only successful transactions:
 ```bash
-python event_monitor.py --filters '{"onlySuccess": true}'
+python examples/python/event_monitor.py --filters '{"onlySuccess": true}'
 ```
 
 ## Session Statistics
@@ -262,7 +262,7 @@ Events follow the MongoTron event schema:
 Run in background and log to file:
 
 ```bash
-nohup python event_monitor.py --address YOUR_ADDRESS > events.log 2>&1 &
+nohup python examples/python/event_monitor.py --address YOUR_ADDRESS > events.log 2>&1 &
 ```
 
 ### Multiple Monitors
@@ -271,10 +271,10 @@ Run multiple monitors for different addresses:
 
 ```bash
 # Terminal 1 - USDT
-python event_monitor.py
+python examples/python/event_monitor.py
 
 # Terminal 2 - Another contract
-python event_monitor.py --address TRX9aKj8VrqEJMvM7vvkA2B3wYGpwj5YSj
+python examples/python/event_monitor.py --address TRX9aKj8VrqEJMvM7vvkA2B3wYGpwj5YSj
 ```
 
 ### Custom Processing

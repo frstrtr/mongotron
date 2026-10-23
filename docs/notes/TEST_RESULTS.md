@@ -122,7 +122,7 @@ None - All endpoints are fully functional!
 - Added channel state tracking to `WebSocketClient`
 - Implemented safe channel closure with mutex protection
 - Removed duplicate channel close in Hub
-- See `WEBSOCKET_FIX.md` for detailed technical explanation
+- See [`WEBSOCKET_FIX.md`](WEBSOCKET_FIX.md) for detailed technical explanation
 
 **Result**: 
 - ✅ All subscription operations work correctly
@@ -154,13 +154,13 @@ None - All previously known issues have been resolved!
 # Setup
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r examples/python/requirements.txt
 
 # Run tests
-python test_client.py
+python examples/python/test_client.py
 
 # With custom URL
-python test_client.py http://custom-host:8080
+python examples/python/test_client.py http://custom-host:8080
 ```
 
 ---

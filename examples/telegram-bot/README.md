@@ -21,7 +21,7 @@ A Telegram bot for monitoring Tron blockchain addresses in real-time using the M
 
 1. **Navigate to the telegram-bot directory:**
    ```bash
-   cd telegram-bot
+   cd examples/telegram-bot
    ```
 
 2. **Create a virtual environment:**

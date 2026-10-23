@@ -168,7 +168,7 @@ Events now include `smartContract` in the data:
    - Modified: `display_transaction_event()` to show decoded info
 
 ### Documentation
-4. **SMART_CONTRACT_DECODING_MONITOR.md** (NEW)
+4. **[SMART_CONTRACT_DECODING_MONITOR.md](../reference/SMART_CONTRACT_DECODING_MONITOR.md)** (NEW)
    - Complete guide to the feature
    - Examples and usage instructions
    - Technical details and extension guide
@@ -220,7 +220,7 @@ curl -s http://localhost:8080/api/v1/events?limit=1 | jq '.events[0].data.eventD
 ### Monitor Check
 ```bash
 source .venv/bin/activate
-python test_smart_contract_display.py
+python examples/python/test_smart_contract_display.py
 ```
 
 **Result**: ✅ All events display with decoded smart contract information
@@ -312,13 +312,13 @@ The system now provides **complete visibility** into smart contract interactions
 source .venv/bin/activate
 
 # Watch all events with smart contract decoding
-python event_monitor.py
+python examples/python/event_monitor.py
 
 # Watch specific address
-python event_monitor.py --address THpjvxomBhvZUodJ3FHFY1szQxAidxejy8
+python examples/python/event_monitor.py --address THpjvxomBhvZUodJ3FHFY1szQxAidxejy8
 
 # Test the display
-python test_smart_contract_display.py
+python examples/python/test_smart_contract_display.py
 ```
 
 Every smart contract interaction will now show:
