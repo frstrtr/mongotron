@@ -1,0 +1,195 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║                    TELEGRAM BOT QUICK REFERENCE                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+📍 LOCATION: /path/to/mongotron/examples/telegram-bot/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚡ QUICK START
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. Get bot token from @BotFather on Telegram
+2. cd examples/telegram-bot
+3. cp .env.example .env
+4. nano .env  # Add your TELEGRAM_BOT_TOKEN
+5. ./start.sh
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📱 BOT COMMANDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/start                              Show welcome & help
+/monitor <address>                  Start monitoring address
+/stop_monitor <address>             Stop monitoring address
+/stop_all                           Stop all monitors
+/list                               List active monitors
+/help                               Show help
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💻 COMMAND LINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Quick start (auto-setup)
+./start.sh
+
+# Manual start
+source venv/bin/activate
+python bot.py
+
+# Test configuration
+python test_bot.py
+
+# Install as service
+sudo cp mongotron-bot.service /etc/systemd/system/
+sudo systemctl enable mongotron-bot
+sudo systemctl start mongotron-bot
+
+# Service management
+sudo systemctl status mongotron-bot    # Check status
+sudo systemctl restart mongotron-bot   # Restart
+sudo journalctl -u mongotron-bot -f    # View logs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📁 FILES CREATED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bot.py                    Main bot application (458 lines)
+test_bot.py              Configuration test script
+requirements.txt         Python dependencies
+.env.example            Environment template
+.env                    Your configuration (create from .env.example)
+.gitignore              Git ignore rules
+start.sh                Quick start script (executable)
+mongotron-bot.service   Systemd service file
+README.md               Full documentation
+COMMANDS.md             Command reference
+SETUP.md                Complete setup guide
+QUICKREF.txt            This file
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 CONFIGURATION (.env)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+API_BASE_URL=http://localhost:8080
+WS_BASE_URL=ws://localhost:8080
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✨ FEATURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Real-time WebSocket monitoring
+✅ Multi-address support
+✅ Smart contract decoding
+✅ Token transfer detection
+✅ Parameter address extraction
+✅ Rich formatted notifications
+✅ Easy command interface
+✅ Automatic reconnection
+✅ Production-ready
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 NOTIFICATION INCLUDES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📦 Block number
+🔗 Transaction hash
+📤 From address
+📥 To address
+💰 Amount (TRX)
+📋 Transaction type
+✅/❌ Success status
+
+🔍 Smart Contract Details:
+   ⚙️ Method name
+   📍 Parameter addresses
+   💵 Token amounts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 EXAMPLE USAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+In Telegram:
+
+/start
+  👋 Welcome message
+
+/monitor TKfUiqAGByAHv8nmTzZqK3RxNc4p3yPqGf
+  ✅ Now monitoring...
+  🔔 [notifications for every transaction]
+
+/list
+  📋 Active Monitors (1):
+  1. TKfUiqAG...
+
+/stop_monitor TKfUiqAGByAHv8nmTzZqK3RxNc4p3yPqGf
+  ✅ Stopped monitoring
+
+/stop_all
+  ✅ Stopped all monitors
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🐛 TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Problem: Bot won't start
+Fix:     Check .env file has TELEGRAM_BOT_TOKEN set
+
+Problem: "Import aiogram could not be resolved"
+Fix:     pip install -r requirements.txt
+
+Problem: "Failed to connect to API"
+Fix:     Start API server: ./bin/api-server
+
+Problem: No notifications
+Fix:     Check /list, restart monitor, verify address active
+
+Problem: Invalid address format
+Fix:     Address must start with 'T' and be 34 chars
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📚 DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+README.md       Complete project documentation
+COMMANDS.md     Detailed command reference with examples
+SETUP.md        Complete setup guide
+QUICKREF.txt    This quick reference
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔐 SECURITY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ .env is git-ignored
+✅ Never commit bot token
+✅ Don't share token publicly
+✅ Rotate via @BotFather if compromised
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎁 REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Python 3.8+                Required
+Mongotron API Server       Must be running (default: localhost:8080)
+Telegram Bot Token         From @BotFather
+Internet Connection        For Telegram & blockchain
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 USE CASES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Personal Wallet        Monitor your own transactions
+🏦 Exchange Wallets       Watch exchange activity
+🪙 Token Contracts        Track token transfers
+🔍 DeFi Contracts         Monitor smart contract activity
+📈 Portfolio Tracking     Monitor multiple addresses
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 READY TO GO!
+
+cd examples/telegram-bot && ./start.sh
+
+Happy monitoring! 🎉
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

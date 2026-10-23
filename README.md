@@ -26,7 +26,7 @@
 - Webhook notifications
 - Production-ready with rate limiting
 
-See [API_SERVER_README.md](API_SERVER_README.md) for complete API documentation.
+See [API_SERVER_README.md](docs/reference/API_SERVER_README.md) for complete API documentation.
 
 ### Key Performance Metrics
 - **🚀 Ultra-Low Latency**: 3-second polling interval for near real-time detection
@@ -143,10 +143,10 @@ go build -o bin/mongotron-mvp ./cmd/mvp/main.go
 ### Configuration
 
 The MVP connects to:
-- **MongoDB**: `nileVM.lan:27017` (database: `mongotron`)
-- **Tron Node**: `nileVM.lan:50051` (Nile Testnet v4.8.0)
+- **MongoDB**: `--mongo-uri`, default `MONGODB_URI` from the environment, else `mongodb://localhost:27017/mongotron` (database: `--mongo-db`, default `mongotron`)
+- **Tron Node**: `--tron-host` and `--tron-port`, default `TRON_NODE_HOST` from the environment, else `localhost`, port `50051`
 
-Update these in the code if using different endpoints.
+Run `./bin/mongotron-mvp --help` for every flag.
 
 ### Supported Transaction Types
 
@@ -166,6 +166,20 @@ The MVP recognizes and decodes:
 - Stake Tokens, Unstake Tokens, Claim Rewards
 - NFT Transfer, NFT Burn, NFT Approve
 - And 50+ more...
+
+---
+
+## Documentation
+
+All documentation is under [docs/](docs/); [docs/README.md](docs/README.md) is the index.
+
+- **Architecture**: [docs/architecture/](docs/architecture/): API server design, smart contract decoding
+- **Guides**: [docs/guides/](docs/guides/): [quick start](docs/guides/QUICK_START.md), [startup](docs/guides/STARTUP_GUIDE.md), [installation](docs/guides/INSTALL_SCRIPT.md), [infrastructure](docs/guides/INFRASTRUCTURE.md), [deployment](docs/guides/DEPLOYMENT.md), [performance tuning](docs/guides/PERFORMANCE_TUNING.md), [testing](docs/guides/TEST_GUIDE.md)
+- **Reference**: [docs/reference/](docs/reference/): [API server](docs/reference/API_SERVER_README.md), [API overview](docs/reference/API.md), [quick reference](docs/reference/QUICK_REFERENCE.md)
+- **Notes**: [docs/notes/](docs/notes/): development history, bug fix write-ups and test reports, kept as written
+- **Porto API integration**: [below](#porto-api-integration) in this README
+- **Clients and demos**: [examples/](examples/README.md) (Python event monitor and test client, Node.js WebSocket client, Telegram bot)
+- **Changes**: [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -293,7 +307,7 @@ make test
 make run
 ```
 
-📚 **Detailed Documentation**: See [docs/INSTALL_SCRIPT.md](docs/INSTALL_SCRIPT.md) for complete installation guide.
+📚 **Detailed Documentation**: See [docs/guides/INSTALL_SCRIPT.md](docs/guides/INSTALL_SCRIPT.md) for complete installation guide.
 
 ### Manual Installation
 
@@ -377,7 +391,7 @@ make build
 For production deployment with ZFS on NVMe for optimal performance:
 
 ```bash
-# See INFRASTRUCTURE.md for complete setup guide
+# See docs/guides/INFRASTRUCTURE.md for complete setup guide
 
 # Quick setup on remote VM:
 # 1. Create ZFS pool on NVMe
@@ -422,7 +436,7 @@ cd deployments/docker
 docker-compose up -d
 ```
 
-📚 **Detailed Infrastructure Setup**: See [INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) for comprehensive production deployment guide including ZFS optimization, MongoDB configuration, and performance tuning.
+📚 **Detailed Infrastructure Setup**: See [INFRASTRUCTURE.md](docs/guides/INFRASTRUCTURE.md) for comprehensive production deployment guide including ZFS optimization, MongoDB configuration, and performance tuning.
 
 ---
 
@@ -431,91 +445,51 @@ docker-compose up -d
 ```
 mongotron/
 ├── cmd/
-│   ├── mongotron/                 # Main application entry point
-│   │   └── main.go
-│   ├── cli/                       # CLI tools and utilities
-│   │   └── main.go
-│   └── migrate/                   # Database migration tools
-│       └── main.go
+│   ├── api-server/                # API server (REST, WebSocket, Porto webhooks)
+│   ├── mvp/                       # CLI monitor (mongotron-mvp)
+│   ├── cli/                       # CLI tools
+│   └── migrate/                   # Database migration tool
 ├── internal/
-│   ├── api/                       # HTTP/WebSocket/gRPC API handlers
-│   │   ├── handlers/
-│   │   ├── middleware/
-│   │   ├── websocket/
-│   │   └── grpc/
-│   ├── blockchain/                # Tron blockchain integration
-│   │   ├── client/                # gRPC client for Tron node
-│   │   ├── parser/                # Transaction and block parsing
-│   │   └── monitor/               # Real-time monitoring logic
-│   ├── storage/                   # MongoDB data access layer
-│   │   ├── models/                # Data models and schemas
-│   │   ├── repositories/          # Repository pattern implementations
-│   │   └── migrations/            # Database migrations
-│   ├── worker/                    # Worker pool and job processing
-│   │   ├── pool/                  # Goroutine pool management
-│   │   ├── jobs/                  # Job definitions and handlers
-│   │   └── queue/                 # Job queue implementations
-│   ├── webhook/                   # Webhook delivery system
-│   │   ├── delivery/              # Webhook delivery logic
-│   │   ├── retry/                 # Retry mechanisms
-│   │   └── templates/             # Webhook payload templates
-│   └── config/                    # Configuration management
-│       ├── config.go
-│       └── validation.go
-├── pkg/                           # Public Go packages
-│   ├── logger/                    # Structured logging
-│   ├── metrics/                   # Prometheus metrics
-│   ├── health/                    # Health check utilities
-│   ├── auth/                      # Authentication/authorization
-│   └── utils/                     # Common utilities
-├── api/                           # API specifications
-│   ├── openapi/                   # OpenAPI/Swagger specifications
-│   ├── proto/                     # Protocol Buffer definitions
-│   └── schemas/                   # JSON schemas
-├── configs/                       # Configuration files
-│   ├── mongotron.yml              # Main configuration
-│   ├── .env.example               # Environment variables template
-│   └── docker/                    # Docker-specific configs
-├── deployments/                   # Deployment configurations
-│   ├── docker/
-│   │   ├── Dockerfile
-│   │   ├── docker-compose.yml
-│   │   └── docker-compose.prod.yml
-│   ├── kubernetes/
-│   │   ├── namespace.yml
-│   │   ├── deployment.yml
-│   │   ├── service.yml
-│   │   ├── configmap.yml
-│   │   ├── ingress.yml
-│   │   └── hpa.yml
-│   └── helm/                      # Helm charts
-├── scripts/                       # Build and utility scripts
-│   ├── build.sh                   # Build script
-│   ├── test.sh                    # Test script
-│   ├── deploy.sh                  # Deployment script
-│   └── benchmark.sh               # Performance benchmarking
-├── tests/                         # Test files
-│   ├── unit/                      # Unit tests
-│   ├── integration/               # Integration tests
-│   ├── e2e/                       # End-to-end tests
-│   └── performance/               # Performance tests
-├── docs/                          # Documentation
-│   ├── api/                       # API documentation
-│   ├── deployment/                # Deployment guides
-│   └── performance/               # Performance tuning guides
-├── tools/                         # Development tools
-│   └── go.mod                     # Tool dependencies
-├── .github/                       # GitHub workflows
-│   └── workflows/
-│       ├── ci.yml
-│       ├── cd.yml
-│       └── security.yml
-├── go.mod                         # Go module definition
-├── go.sum                         # Go module checksums
-├── Makefile                       # Build automation
-├── README.md                      # This file
-├── LICENSE                        # MIT License
-└── .gitignore                     # Git ignore rules
+│   ├── api/                       # HTTP handlers and the WebSocket hub
+│   ├── blockchain/                # Tron client, parser, ABI decoder, monitors and block scanner
+│   ├── config/                    # Configuration loading
+│   ├── storage/                   # MongoDB models and repositories
+│   ├── subscription/              # Subscription manager, event router, gap scans
+│   └── webhook/                   # Signed Porto API webhook client
+├── pkg/
+│   └── logger/                    # Structured logging
+├── configs/                       # Runtime configuration (deployed hosts read these paths)
+│   ├── mongotron.yaml             # Default config file
+│   ├── mongotron-oplx2.yaml       # Nile archive node variant
+│   ├── mongotron.yml              # Config baked into the Docker image
+│   └── .env.example               # Environment variables template
+├── deployments/
+│   ├── docker/                    # Dockerfile, docker-compose.yml, docker-compose.prod.yml
+│   └── kubernetes/                # namespace, configmap, deployment, service, ingress, hpa
+├── scripts/                       # build, test, deploy, benchmark, install-prerequisites,
+│                                  # run_tests, start, test_api
+├── tests/
+│   ├── unit/
+│   ├── integration/               # integration/api needs a live server and MONGOTRON_INTEGRATION=1
+│   └── performance/
+├── examples/                      # Clients and demos (not part of the Go build)
+│   ├── python/                    # Event monitor, API test client
+│   ├── js/                        # WebSocket client
+│   └── telegram-bot/              # Demo Telegram bot
+├── docs/                          # Documentation, index in docs/README.md
+│   ├── architecture/
+│   ├── guides/
+│   ├── reference/
+│   └── notes/
+├── archive/                       # Old copies kept for history, unused (archive/README.md)
+├── tools/                         # Go module pinning development tools
+├── .github/workflows/             # ci.yml, cd.yml, security.yml
+├── go.mod, go.sum
+├── Makefile
+├── CHANGELOG.md
+├── VERSION
+├── LICENSE
+└── README.md
 ```
 
 ---
@@ -1102,6 +1076,9 @@ e.g. `MONGOTRON_MONITOR_SHAREDSCANNER=false` or
 
 ### Production Docker Compose (docker-compose.prod.yml)
 
+The file holds no passwords: set `MONGO_ROOT_PASSWORD` and `GRAFANA_ADMIN_PASSWORD` in the
+environment first, or `docker compose` stops with an error naming the missing variable.
+
 ```yaml
 version: '3.8'
 
@@ -1157,7 +1134,7 @@ services:
       - "27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: strongpassword
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: mongotron
     volumes:
       - mongodb-data:/data/db
@@ -1212,7 +1189,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./deployments/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
@@ -1484,7 +1461,7 @@ mongotron/
 ├── internal/api/handlers/
 │   ├── subscription_test.go    # 9 subscription handler tests
 │   └── health_test.go          # 4 health check tests
-└── test/integration/
+└── tests/integration/api/
     └── api_integration_test.go # 5 integration test suites
 ```
 
@@ -1516,7 +1493,7 @@ mongotron/
 
 **Unit Tests** (fast, no external dependencies):
 ```bash
-./run_tests.sh unit
+./scripts/run_tests.sh unit
 # or
 go test ./internal/api/handlers/...
 ```
@@ -1527,9 +1504,9 @@ go test ./internal/api/handlers/...
 ./bin/mongotron-api
 
 # Terminal 2: Run integration tests
-./run_tests.sh integration
+./scripts/run_tests.sh integration
 # or
-go test ./test/integration/...
+MONGOTRON_INTEGRATION=1 go test ./tests/integration/api/...
 ```
 
 **Coverage Report**:
@@ -1557,7 +1534,7 @@ func TestExample(t *testing.T) {
 }
 ```
 
-For detailed testing documentation, see [TEST_GUIDE.md](TEST_GUIDE.md).
+For detailed testing documentation, see [TEST_GUIDE.md](docs/guides/TEST_GUIDE.md).
 
 ---
 
@@ -1652,7 +1629,7 @@ MongoTron is released under the [MIT License](LICENSE). This permissive license 
 
 ## Support & Community
 
-- **Documentation**: [docs.mongotron.io](https://docs.mongotron.io)
+- **Documentation**: [docs/README.md](docs/README.md)
 - **Discord**: [Join our community](https://discord.gg/mongotron)
 - **GitHub Issues**: [Report bugs and request features](https://github.com/frstrtr/mongotron/issues)
 - **Email**: support@mongotron.io

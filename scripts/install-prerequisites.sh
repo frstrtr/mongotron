@@ -525,7 +525,7 @@ ${YELLOW}⚠️  Important Next Steps:${NC}
 ${CYAN}📚 Documentation:${NC}
   • Installation log: ${LOG_FILE}
   • README: README.md
-  • Prerequisites: PREREQUISITES_INSTALLED.md
+  • Prerequisites: docs/notes/PREREQUISITES_INSTALLED.md
 
 ${CYAN}🚀 Quick Start Commands:${NC}
   ${GREEN}make build${NC}       - Build all binaries

@@ -123,8 +123,8 @@ TronTXType="Smart Contract" SCTXType="Unknown Method (0xb9f412b0)"
 #### Architecture
 - **Language**: Go 1.24.0
 - **Blockchain SDK**: fbsobreira/gotron-sdk v0.24.1
-- **Database**: MongoDB 7.0.25 on nileVM.lan:27017
-- **Blockchain Node**: Tron Nile Testnet v4.8.0 (nileVM.lan:50051)
+- **Database**: MongoDB 7.0.25 on nile-node.example.com:27017
+- **Blockchain Node**: Tron Nile Testnet v4.8.0 (nile-node.example.com:50051)
 - **ABI Parsing**: ethereum/go-ethereum v1.15.6
 - **Logging**: rs/zerolog (structured JSON logging)
 
@@ -144,8 +144,8 @@ TronTXType="Smart Contract" SCTXType="Unknown Method (0xb9f412b0)"
 ### Configuration
 
 **Default Settings:**
-- MongoDB: `nileVM.lan:27017` (database: `mongotron`)
-- Tron Node: `nileVM.lan:50051` (Nile Testnet v4.8.0)
+- MongoDB: `nile-node.example.com:27017` (database: `mongotron`)
+- Tron Node: `nile-node.example.com:50051` (Nile Testnet v4.8.0)
 - Poll Interval: 3 seconds
 - Network: Tron Nile Testnet
 

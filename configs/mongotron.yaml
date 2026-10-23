@@ -1,4 +1,4 @@
-# MongoTron Configuration for oplx2 (Nile Testnet Full Archive Node)
+# MongoTron Configuration for a Nile Testnet Full Archive Node
 
 server:
   host: 0.0.0.0
