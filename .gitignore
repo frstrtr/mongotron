@@ -110,3 +110,30 @@ pip-delete-this-directory.txt
 .coverage.*
 htmlcov/
 .tox/
+
+# Runtime artifacts
+*.pid
+nohup.out
+
+# Binaries built at the repository root (go build ./cmd/...)
+/api-server
+/cli
+/migrate
+/mvp
+/mongotron-api
+/mongotron-mvp
+
+# Environment files with real values (the committed templates are *.env.example)
+.env.*
+!.env.example
+
+# Editor and merge leftovers, broken copies (archive/ keeps the old ones)
+*.bak
+*.orig
+*.rej
+*.broken
+# archive/ keeps old copies on purpose (see archive/README.md)
+!/archive/**
+
+# Node
+node_modules/
