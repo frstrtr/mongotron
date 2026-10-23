@@ -678,10 +678,11 @@ func (f *scanFeed) push(block int64, tx *sharedTx) bool {
 	return true
 }
 
+// close stops deliveries to the feed. Queued matches are kept (never handled), so the
+// progress of a stopped monitor stays before the first of them.
 func (f *scanFeed) close() {
 	f.mu.Lock()
 	f.closed = true
-	f.items = nil
 	f.mu.Unlock()
 	f.signal()
 }
