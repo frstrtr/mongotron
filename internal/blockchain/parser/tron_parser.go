@@ -276,11 +276,39 @@ func (p *TronParser) parseCreateSmartContract(contract *core.Transaction_Contrac
 	return addresses
 }
 
-// parseGenericContract attempts to extract addresses from unknown contract types
+// parseGenericContract extracts the owner (sender) address of contract types that have
+// no dedicated parser (account updates, account creation, proposals, exchanges, contract
+// settings, ...). The owner pays the transaction's resources, so a watched owner must
+// see its own transactions of any type.
 func (p *TronParser) parseGenericContract(contract *core.Transaction_Contract) []string {
-	// For generic contracts, we can try to extract addresses from the raw data
-	// This is a basic implementation - you may want to enhance this based on specific contract types
+	if owner := ContractOwner(contract); len(owner) > 0 {
+		return []string{p.encodeAddress(owner)}
+	}
 	return []string{}
+}
+
+// ownerAddressed is implemented by every TRON system contract message that has an
+// owner_address field (the account that signs and pays for the transaction).
+type ownerAddressed interface {
+	GetOwnerAddress() []byte
+}
+
+// ContractOwner returns the raw owner_address (21 bytes, 0x41 prefix) of a contract of
+// any type, or nil when the contract has none or cannot be decoded. The owner is the
+// account whose energy and bandwidth the transaction consumes.
+func ContractOwner(contract *core.Transaction_Contract) []byte {
+	param := contract.GetParameter()
+	if param == nil {
+		return nil
+	}
+	msg, err := param.UnmarshalNew()
+	if err != nil {
+		return nil
+	}
+	if o, ok := msg.(ownerAddressed); ok {
+		return o.GetOwnerAddress()
+	}
+	return nil
 }
 
 // parseGeneric extracts generic contract details

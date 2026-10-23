@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 const testYAML = `
@@ -156,6 +157,68 @@ func TestRepoConfigsTakeWebhookSecretFromEnv(t *testing.T) {
 			if cfg.Webhooks.Porto.OperationPath != "/v1/webhooks/mongotron/operation" {
 				t.Fatalf("%s: operationPath = %q", name, cfg.Webhooks.Porto.OperationPath)
 			}
+			if cfg.Webhooks.Porto.UsagePath != "/v1/webhooks/mongotron/usage" || !cfg.Monitor.SharedScanner {
+				t.Fatalf("%s: usagePath = %q, sharedScanner = %v", name, cfg.Webhooks.Porto.UsagePath, cfg.Monitor.SharedScanner)
+			}
 		})
+	}
+}
+
+func TestMonitorAndUsageDefaults(t *testing.T) {
+	path := writeConfig(t, t.TempDir(), "explicit.yaml", testYAML)
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	m := cfg.Monitor
+	if !m.SharedScanner || m.PollInterval != 3*time.Second || m.CatchUpWindow != 1200 {
+		t.Errorf("unexpected monitor defaults: %+v", m)
+	}
+	p := cfg.Webhooks.Porto
+	if !p.UsageEnabled || p.UsagePath != "/v1/webhooks/mongotron/usage" {
+		t.Errorf("unexpected usage defaults: enabled=%v path=%q", p.UsageEnabled, p.UsagePath)
+	}
+	if len(p.UsageWalletTypes) != 1 || p.UsageWalletTypes[0] != "keep_level" {
+		t.Errorf("usageWalletTypes = %v, want [keep_level]", p.UsageWalletTypes)
+	}
+}
+
+func TestMonitorAndUsageFromFileAndEnv(t *testing.T) {
+	const yaml = `
+monitor:
+  sharedScanner: false
+  pollInterval: 5s
+  catchUpWindow: 600
+webhooks:
+  porto:
+    enabled: true
+    usageEnabled: false
+    usagePath: "/custom/usage"
+    usageWalletTypes: ["keep_level", "general"]
+`
+	path := writeConfig(t, t.TempDir(), "usage.yaml", yaml)
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Monitor.SharedScanner || cfg.Monitor.PollInterval != 5*time.Second || cfg.Monitor.CatchUpWindow != 600 {
+		t.Errorf("monitor from file: %+v", cfg.Monitor)
+	}
+	p := cfg.Webhooks.Porto
+	if p.UsageEnabled || p.UsagePath != "/custom/usage" || len(p.UsageWalletTypes) != 2 || p.UsageWalletTypes[1] != "general" {
+		t.Errorf("usage from file: %+v", p)
+	}
+
+	t.Setenv("MONGOTRON_MONITOR_SHAREDSCANNER", "true")
+	t.Setenv("MONGOTRON_WEBHOOKS_PORTO_USAGEWALLETTYPES", "keep_level,invoice")
+	cfg, err = LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if !cfg.Monitor.SharedScanner {
+		t.Error("MONGOTRON_MONITOR_SHAREDSCANNER=true not applied")
+	}
+	if got := cfg.Webhooks.Porto.UsageWalletTypes; len(got) != 2 || got[0] != "keep_level" || got[1] != "invoice" {
+		t.Errorf("usageWalletTypes from env = %v", got)
 	}
 }

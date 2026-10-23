@@ -14,9 +14,15 @@ import (
 	"github.com/frstrtr/mongotron/pkg/logger"
 )
 
-// AddressMonitor watches blockchain for a specific address
+// AddressMonitor watches blockchain for a specific address.
+//
+// With Config.Scanner set it reads blocks from that shared BlockScanner (each block is
+// fetched and parsed once for every watched address); otherwise it polls the node on
+// its own, one block fetch per block per watched address.
 type AddressMonitor struct {
-	client          *client.TronClient
+	client          BlockSource
+	scanner         *BlockScanner
+	feed            *scanFeed
 	parser          *parser.TronParser
 	logger          *logger.Logger
 	watchAddress    string
@@ -52,13 +58,31 @@ type AddressEvent struct {
 // Config holds address monitor configuration
 type Config struct {
 	WatchAddress string
-	PollInterval time.Duration
-	StartBlock   int64 // 0 means start from current block
+	PollInterval time.Duration // own polling only; a shared scanner has its own interval
+	StartBlock   int64         // last block already covered; 0 or negative means start from the current block
+	// Scanner, when set, makes the monitor read blocks from this shared scanner instead
+	// of polling the node itself.
+	Scanner *BlockScanner
 }
 
 // NewAddressMonitor creates a new address monitor
 func NewAddressMonitor(
 	tronClient *client.TronClient,
+	cfg Config,
+	log *logger.Logger,
+) (*AddressMonitor, error) {
+	var src BlockSource
+	if tronClient != nil {
+		src = tronClient
+	}
+	return NewAddressMonitorFromSource(src, cfg, log)
+}
+
+// NewAddressMonitorFromSource creates an address monitor reading from any BlockSource.
+// With cfg.Scanner set and src nil, the scanner's source is used for the monitor's own
+// reads (catch-up and historical scans).
+func NewAddressMonitorFromSource(
+	src BlockSource,
 	cfg Config,
 	log *logger.Logger,
 ) (*AddressMonitor, error) {
@@ -77,8 +101,13 @@ func NewAddressMonitor(
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	if src == nil && cfg.Scanner != nil {
+		src = cfg.Scanner.src
+	}
+
 	monitor := &AddressMonitor{
-		client:       tronClient,
+		client:       src,
+		scanner:      cfg.Scanner,
 		parser:       parser.NewTronParser(log),
 		logger:       log,
 		watchAddress: cfg.WatchAddress,
@@ -97,6 +126,7 @@ func NewAddressMonitor(
 		Str("hex", monitor.watchAddressHex).
 		Int64("startBlock", cfg.StartBlock).
 		Dur("pollInterval", cfg.PollInterval).
+		Bool("sharedScanner", cfg.Scanner != nil).
 		Msg("Address monitor initialized")
 
 	return monitor, nil
@@ -110,6 +140,15 @@ func (m *AddressMonitor) Start() error {
 		return fmt.Errorf("monitor is already running")
 	}
 	m.isRunning = true
+	if m.scanner != nil {
+		// Shared scanner: no node read here; the scanner places the monitor.
+		feed := m.scanner.subscribe(m.watchAddress, m.watchAddressHex, m.lastBlockNum)
+		m.feed = feed
+		m.mu.Unlock()
+		m.logger.Info().Str("address", m.watchAddress).Msg("Starting address monitor on the shared block scanner")
+		go m.feedLoop(feed)
+		return nil
+	}
 	m.mu.Unlock()
 
 	// If starting from block 0 or negative (use current block)
@@ -141,9 +180,35 @@ func (m *AddressMonitor) Stop() {
 	}
 
 	m.logger.Info().Msg("Stopping address monitor")
+	if m.scanner != nil && m.feed != nil {
+		m.scanner.unsubscribe(m.feed)
+	}
 	m.cancel()
 	m.isRunning = false
 	close(m.eventChannel)
+}
+
+// emit sends an event to the channel without blocking (a full channel drops it, as
+// before). It never sends after Stop closed the channel.
+func (m *AddressMonitor) emit(event *AddressEvent) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if !m.isRunning {
+		return
+	}
+	select {
+	case m.eventChannel <- event:
+		m.logger.Info().
+			Int64("block", event.BlockNumber).
+			Str("txHash", event.TransactionHash).
+			Str("from", event.From).
+			Str("to", event.To).
+			Int64("amount", event.Amount).
+			Str("type", event.ContractType).
+			Msg("Address event detected")
+	default:
+		m.logger.Warn().Msg("Event channel full, dropping event")
+	}
 }
 
 // Events returns the channel for receiving address events
@@ -151,11 +216,95 @@ func (m *AddressMonitor) Events() <-chan *AddressEvent {
 	return m.eventChannel
 }
 
-// GetLastBlockNumber returns the last processed block number
+// GetLastBlockNumber returns the last processed block number. On a shared scanner it
+// never passes a block whose matches for this address are still being handled.
 func (m *AddressMonitor) GetLastBlockNumber() int64 {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.lastBlockNum
+	feed, last := m.feed, m.lastBlockNum
+	m.mu.RUnlock()
+	if feed != nil {
+		return feed.lastProcessed()
+	}
+	return last
+}
+
+// feedLoop handles the matches the shared scanner queues for this address, after a
+// catch-up of its own when the address started behind the scanner.
+func (m *AddressMonitor) feedLoop(feed *scanFeed) {
+	for !feed.isResolved() {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-feed.notify:
+		}
+	}
+
+	if from, to, ok := feed.catchUpRange(); ok {
+		m.logger.Info().
+			Str("address", m.watchAddress).
+			Int64("from", from).
+			Int64("to", to).
+			Msg("Address is behind the shared scanner: catching up on its own first")
+		m.catchUp(feed, from, to)
+		feed.finishCatchUp()
+	}
+
+	for {
+		for {
+			if m.ctx.Err() != nil {
+				return
+			}
+			it, ok := feed.next()
+			if !ok {
+				break
+			}
+			event, err := it.tx.eventCopy()
+			if err != nil {
+				m.logger.Error().
+					Err(err).
+					Int64("block", it.block).
+					Msg("Error extracting event from transaction")
+			} else if event != nil {
+				m.emit(event)
+			}
+			feed.done()
+		}
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-feed.notify:
+		}
+	}
+}
+
+// catchUp reads blocks from..to on its own (the scanner is already past them).
+func (m *AddressMonitor) catchUp(feed *scanFeed, from, to int64) {
+	for blockNum := from; blockNum <= to; blockNum++ {
+		var err error
+		for attempt := 1; attempt <= catchUpAttempts; attempt++ {
+			if m.ctx.Err() != nil {
+				return
+			}
+			m.scanner.catchUpFetches.Add(1)
+			if err = m.processBlock(blockNum); err == nil {
+				break
+			}
+			if attempt < catchUpAttempts {
+				select {
+				case <-m.ctx.Done():
+					return
+				case <-time.After(catchUpRetryDelay):
+				}
+			}
+		}
+		if err != nil {
+			m.logger.Error().
+				Err(err).
+				Int64("block", blockNum).
+				Msg("Catch-up: block skipped after failed fetches")
+		}
+		feed.catchUpProgress(blockNum)
+	}
 }
 
 // monitorLoop continuously polls for new blocks
@@ -262,19 +411,7 @@ func (m *AddressMonitor) processBlock(blockNum int64) error {
 				event.BlockTimestamp = blockHeader.GetTimestamp()
 
 				// Send event to channel (non-blocking)
-				select {
-				case m.eventChannel <- event:
-					m.logger.Info().
-						Int64("block", blockNum).
-						Str("txHash", event.TransactionHash).
-						Str("from", event.From).
-						Str("to", event.To).
-						Int64("amount", event.Amount).
-						Str("type", event.ContractType).
-						Msg("Address event detected")
-				default:
-					m.logger.Warn().Msg("Event channel full, dropping event")
-				}
+				m.emit(event)
 			}
 		}
 	}
@@ -303,84 +440,7 @@ func (m *AddressMonitor) isAddressInTransaction(tx *core.Transaction) bool {
 
 // extractEvent extracts detailed event information from a transaction
 func (m *AddressMonitor) extractEvent(block *core.Block, tx *core.Transaction) (*AddressEvent, error) {
-	if tx == nil || tx.GetRawData() == nil {
-		return nil, fmt.Errorf("invalid transaction")
-	}
-
-	// Calculate the correct transaction ID (SHA256 of raw transaction data)
-	txID := m.parser.CalculateTransactionID(tx)
-	if txID == "" {
-		return nil, fmt.Errorf("failed to calculate transaction ID")
-	}
-
-	// Get transaction info (includes events, logs, receipt). Without it the transaction's outcome
-	// is unknown: the event is still delivered, but with Success=false (never assumed true).
-	txInfo, err := fetchTxInfo(m.ctx, m.client, txID, txInfoAttempts, txInfoRetryDelay, txInfoTimeout)
-	if err != nil {
-		m.logger.Warn().
-			Err(err).
-			Str("txID", txID).
-			Msg("Failed to get transaction info: event delivered with success=false (outcome not verified)")
-		txInfo = nil
-	}
-
-	event := &AddressEvent{
-		TransactionID:   txID,
-		TransactionHash: txID,
-		RawTransaction:  tx,
-		RawTxInfo:       txInfo,
-		Success:         false,
-		EventData:       make(map[string]interface{}),
-	}
-
-	txRaw := tx.GetRawData()
-
-	// Extract transaction details
-	if len(txRaw.GetContract()) > 0 {
-		contract := txRaw.GetContract()[0]
-		event.ContractType = contract.GetType().String()
-
-		// Parse contract data
-		from, to, amount := m.parser.ParseContract(contract)
-		event.From = from
-		event.To = to
-		event.Amount = amount
-
-		// Decode smart contract call data if available
-		if decoded := m.parser.DecodeSmartContract(contract); decoded != nil {
-			event.EventData["smartContract"] = map[string]interface{}{
-				"methodSignature": decoded.MethodSignature,
-				"methodName":      decoded.MethodName,
-				"addresses":       decoded.Addresses,
-				"parameters":      decoded.Parameters,
-			}
-			if decoded.Amount != nil {
-				event.EventData["smartContract"].(map[string]interface{})["amount"] = decoded.Amount.String()
-			}
-		}
-	}
-
-	// Extract transaction result from txInfo
-	if txInfo != nil {
-		event.Success = TxInfoSucceeded(txInfo)
-
-		// Extract contract events/logs
-		if len(txInfo.GetLog()) > 0 {
-			event.EventType = "ContractEvent"
-			event.EventData["logs"] = m.parser.ParseLogs(txInfo.GetLog())
-		}
-
-		// Add receipt info
-		if txInfo.GetReceipt() != nil {
-			receipt := txInfo.GetReceipt()
-			event.EventData["energyUsage"] = receipt.GetEnergyUsage()
-			event.EventData["energyFee"] = receipt.GetEnergyFee()
-			event.EventData["netUsage"] = receipt.GetNetUsage()
-			event.EventData["netFee"] = receipt.GetNetFee()
-		}
-	}
-
-	return event, nil
+	return buildAddressEvent(m.ctx, m.client, m.parser, m.logger, tx)
 }
 
 // addressToHex converts a Tron base58 address to hex format

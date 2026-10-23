@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/frstrtr/mongotron/internal/storage/models"
@@ -27,7 +28,32 @@ const (
 	WalletTypeGasStation WalletType = "gasstation"
 	// WalletTypeInvoice represents invoice payment wallets
 	WalletTypeInvoice WalletType = "invoice"
+	// WalletTypeKeepLevel represents an address watched only for its resource usage
+	// (a keep-level energy rental receiver): it produces energy_usage events and no
+	// transfer or operation events for Porto.
+	WalletTypeKeepLevel WalletType = subscription.WalletTypeKeepLevel
 )
+
+// validWalletTypesText lists the accepted wallet types for error messages.
+const validWalletTypesText = "platform, nps, portal, exchange, gasstation, invoice, general, keep_level"
+
+// WalletTypeConflictError is returned by a guarded watchlist write (failIfOtherWalletType,
+// or DELETE with ?walletType=) when the address is actively watched under another type.
+type WalletTypeConflictError struct {
+	Existing *models.Subscription
+}
+
+func (e *WalletTypeConflictError) Error() string {
+	return fmt.Sprintf("address is watched as %q (subscription %s)", string(effectiveWalletType(e.Existing.WalletType)), e.Existing.SubscriptionID)
+}
+
+// effectiveWalletType returns the wallet type a stored value means (empty is general).
+func effectiveWalletType(wt string) WalletType {
+	if wt == "" {
+		return WalletTypeGeneral
+	}
+	return WalletType(wt)
+}
 
 // WatchListHandler handles watch list management for USDT/TRC20 monitoring
 // Supports multiple wallet types: NPS custodial, portal non-custodial, exchange, etc.
@@ -56,6 +82,10 @@ type WatchAddressRequest struct {
 	AssetTypes  []string               `json:"assetTypes,omitempty"`  // e.g., ["TRX", "TRC10", "TRC20"] - empty means all
 	StartBlock  int64                  `json:"startBlock,omitempty"`  // Start monitoring from specific block (0 = current)
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`    // Extra data (e.g., account_id, portal_user_id)
+	// FailIfOtherWalletType guards the upsert: when the address is already actively
+	// watched under a different wallet type (an omitted walletType means general),
+	// nothing changes and the answer is 409 wallet_type_conflict with that row.
+	FailIfOtherWalletType bool `json:"failIfOtherWalletType,omitempty"`
 }
 
 // BulkWatchRequest represents a bulk add request
@@ -168,11 +198,19 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 	if req.WalletType != "" && !isValidWalletType(req.WalletType) {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
 			Error:   "invalid_wallet_type",
-			Message: "Invalid wallet type. Must be one of: platform, nps, portal, exchange, gasstation, invoice, general",
+			Message: "Invalid wallet type. Must be one of: " + validWalletTypesText,
 		})
 	}
 
 	sub, created, err := h.upsertWatch(req, req.WebhookURL)
+	var conflict *WalletTypeConflictError
+	if errors.As(err, &conflict) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":    "wallet_type_conflict",
+			"message":  conflict.Error(),
+			"existing": toWatchListResponse(conflict.Existing),
+		})
+	}
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
 			Error:   "subscription_failed",
@@ -197,11 +235,16 @@ func (h *WatchListHandler) AddToWatchList(c *fiber.Ctx) error {
 //   - walletType, userId, label: replace the stored value when non-empty.
 //   - metadata present: replaces the stored metadata as a whole (no merge).
 //   - webhookUrl and startBlock are creation-only and never change an existing row.
+//   - failIfOtherWalletType: an active row of another wallet type is left untouched and
+//     a *WalletTypeConflictError is returned.
 func (h *WatchListHandler) upsertWatch(req WatchAddressRequest, webhookURL string) (*models.Subscription, bool, error) {
 	h.upsertMu.Lock()
 	defer h.upsertMu.Unlock()
 
 	if existing, err := h.manager.GetByAddress(req.Address); err == nil && existing != nil && existing.Status == "active" {
+		if req.FailIfOtherWalletType && effectiveWalletType(existing.WalletType) != effectiveWalletType(string(req.WalletType)) {
+			return nil, false, &WalletTypeConflictError{Existing: existing}
+		}
 		sub, err := h.manager.UpdateSubscription(existing.SubscriptionID, resolveWatchUpdate(existing, req))
 		return sub, false, err
 	}
@@ -298,7 +341,7 @@ func toWatchListResponse(sub *models.Subscription) WatchListResponse {
 // isValidWalletType checks if the wallet type is valid
 func isValidWalletType(wt WalletType) bool {
 	switch wt {
-	case WalletTypeNPS, WalletTypePortal, WalletTypeExchange, WalletTypePlatform, WalletTypeGeneral, WalletTypeGasStation, WalletTypeInvoice:
+	case WalletTypeNPS, WalletTypePortal, WalletTypeExchange, WalletTypePlatform, WalletTypeGeneral, WalletTypeGasStation, WalletTypeInvoice, WalletTypeKeepLevel:
 		return true
 	}
 	return false
@@ -361,6 +404,14 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 
 		// Same upsert as the single endpoint: an active subscription is updated in place
 		sub, created, err := h.upsertWatch(addr, webhookURL)
+		var conflict *WalletTypeConflictError
+		if errors.As(err, &conflict) {
+			response.Failed = append(response.Failed, BulkFailure{
+				Address: addr.Address,
+				Error:   "wallet_type_conflict: " + conflict.Error(),
+			})
+			continue
+		}
 		if err != nil {
 			response.Failed = append(response.Failed, BulkFailure{
 				Address: addr.Address,
@@ -386,12 +437,25 @@ func (h *WatchListHandler) BulkAddToWatchList(c *fiber.Ctx) error {
 // Stops watching an address. It is idempotent: when the address has no active
 // subscription but was watched before, the answer is 200 with status "stopped"
 // (message "Address already stopped"); 404 only when it was never watched.
+//
+// The optional query ?walletType=T guards the removal: when the active subscription
+// has another wallet type (empty means general), nothing is stopped and the answer is
+// 409 wallet_type_conflict. A client that registered an address under its own type
+// uses it so it can never stop a subscription someone else registered.
 func (h *WatchListHandler) RemoveFromWatchList(c *fiber.Ctx) error {
 	address := c.Params("address")
 	if address == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
 			Error:   "invalid_request",
 			Message: "Address is required",
+		})
+	}
+
+	guard := WalletType(c.Query("walletType", ""))
+	if guard != "" && !isValidWalletType(guard) {
+		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
+			Error:   "invalid_wallet_type",
+			Message: "Invalid wallet type. Must be one of: " + validWalletTypesText,
 		})
 	}
 
@@ -420,6 +484,18 @@ func (h *WatchListHandler) RemoveFromWatchList(c *fiber.Ctx) error {
 			"address":        address,
 			"subscriptionId": sub.SubscriptionID,
 			"status":         sub.Status,
+			"walletType":     effectiveWalletType(sub.WalletType),
+		})
+	}
+
+	if guard != "" && effectiveWalletType(sub.WalletType) != guard {
+		conflict := &WalletTypeConflictError{Existing: sub}
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":          "wallet_type_conflict",
+			"message":        conflict.Error() + "; not removed",
+			"address":        address,
+			"subscriptionId": sub.SubscriptionID,
+			"walletType":     effectiveWalletType(sub.WalletType),
 		})
 	}
 
@@ -436,6 +512,7 @@ func (h *WatchListHandler) RemoveFromWatchList(c *fiber.Ctx) error {
 		"address":        address,
 		"subscriptionId": sub.SubscriptionID,
 		"status":         "stopped",
+		"walletType":     effectiveWalletType(sub.WalletType),
 	})
 }
 
@@ -477,7 +554,7 @@ func (h *WatchListHandler) ResubscribeToWatchList(c *fiber.Ctx) error {
 	if req.WalletType != "" && !isValidWalletType(req.WalletType) {
 		return c.Status(fiber.StatusBadRequest).JSON(ErrorResponse{
 			Error:   "invalid_wallet_type",
-			Message: "Invalid wallet type. Must be one of: platform, nps, portal, exchange, gasstation, invoice, general",
+			Message: "Invalid wallet type. Must be one of: " + validWalletTypesText,
 		})
 	}
 

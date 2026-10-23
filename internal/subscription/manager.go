@@ -90,6 +90,9 @@ var (
 type Manager struct {
 	db          *storage.Database
 	tronClient  *client.TronClient
+	source      monitor.BlockSource
+	scanner     *monitor.BlockScanner // nil when every address polls on its own
+	opts        ManagerOptions
 	logger      *logger.Logger
 	monitors    map[string]*MonitorWrapper // key: subscription_id
 	eventRouter *EventRouter
@@ -98,26 +101,86 @@ type Manager struct {
 	cancel      context.CancelFunc
 }
 
-// NewManager creates a new subscription manager
+// ManagerOptions configures how the manager reads blocks.
+type ManagerOptions struct {
+	// SharedScanner makes every address monitor read from one shared block scanner:
+	// each block is fetched and parsed once for all watched addresses. False keeps one
+	// polling loop (and one block fetch per block) per watched address.
+	SharedScanner bool
+	// PollInterval is how often the head is polled (default 3 s).
+	PollInterval time.Duration
+	// CatchUpWindow is how far behind the newest watched address (in blocks) another
+	// one may be at startup and still be caught up by the shared scanner
+	// (default monitor.DefaultCatchUpWindow).
+	CatchUpWindow int64
+}
+
+// DefaultManagerOptions returns the defaults: shared scanner, 3 s poll.
+func DefaultManagerOptions() ManagerOptions {
+	return ManagerOptions{
+		SharedScanner: true,
+		PollInterval:  monitor.DefaultScannerPollInterval,
+		CatchUpWindow: monitor.DefaultCatchUpWindow,
+	}
+}
+
+// NewManager creates a new subscription manager with the default options.
 func NewManager(db *storage.Database, tronClient *client.TronClient, log *logger.Logger) *Manager {
+	return NewManagerWithOptions(db, tronClient, log, DefaultManagerOptions())
+}
+
+// NewManagerWithOptions creates a new subscription manager.
+func NewManagerWithOptions(db *storage.Database, tronClient *client.TronClient, log *logger.Logger, opts ManagerOptions) *Manager {
+	var src monitor.BlockSource
+	if tronClient != nil {
+		src = tronClient
+	}
+	m := newManager(db, src, log, opts)
+	m.tronClient = tronClient
+	return m
+}
+
+func newManager(db *storage.Database, src monitor.BlockSource, log *logger.Logger, opts ManagerOptions) *Manager {
 	if log == nil {
 		defaultLog := logger.NewDefault()
 		log = &defaultLog
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = monitor.DefaultScannerPollInterval
+	}
+	if opts.CatchUpWindow <= 0 {
+		opts.CatchUpWindow = monitor.DefaultCatchUpWindow
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Manager{
 		db:          db,
-		tronClient:  tronClient,
+		source:      src,
+		opts:        opts,
 		logger:      log,
 		monitors:    make(map[string]*MonitorWrapper),
 		eventRouter: NewEventRouter(db, log),
 		ctx:         ctx,
 		cancel:      cancel,
 	}
+	if opts.SharedScanner && src != nil {
+		m.scanner = monitor.NewBlockScanner(src, monitor.ScannerConfig{
+			PollInterval:  opts.PollInterval,
+			CatchUpWindow: opts.CatchUpWindow,
+		}, log)
+	}
 
 	return m
+}
+
+// ScannerStats returns the shared block scanner's counters; false when the manager
+// runs one polling loop per address.
+func (m *Manager) ScannerStats() (monitor.ScannerStats, bool) {
+	if m.scanner == nil {
+		return monitor.ScannerStats{}, false
+	}
+	return m.scanner.Stats(), true
 }
 
 // Start starts the subscription manager
@@ -146,6 +209,14 @@ func (m *Manager) Start() error {
 	// Start event router
 	go m.eventRouter.Run(m.ctx)
 
+	// The shared scanner starts after the stored subscriptions subscribed to it, so its
+	// first head read can catch them all up together.
+	if m.scanner != nil {
+		if err := m.scanner.Start(); err != nil {
+			return fmt.Errorf("failed to start block scanner: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -161,6 +232,10 @@ func (m *Manager) Stop() error {
 	// Stop all monitors
 	for _, wrapper := range m.monitors {
 		m.stopMonitorUnsafe(wrapper)
+	}
+
+	if m.scanner != nil {
+		m.scanner.Stop()
 	}
 
 	return nil
@@ -449,6 +524,9 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 			StartBlock:   sub.CurrentBlock,
 		}
 
+		if m.tronClient == nil {
+			return fmt.Errorf("global monitoring needs a TRON client")
+		}
 		globalMonitor, err := monitor.NewGlobalMonitor(
 			m.tronClient,
 			globalCfg,
@@ -462,15 +540,16 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 		eventChan = globalMonitor.Events()
 
 	} else {
-		// Address-specific monitoring
+		// Address-specific monitoring (on the shared scanner when there is one)
 		cfg := monitor.Config{
 			WatchAddress: sub.Address,
-			PollInterval: 3 * time.Second,
+			PollInterval: m.opts.PollInterval,
 			StartBlock:   sub.CurrentBlock,
+			Scanner:      m.scanner,
 		}
 
-		addrMonitor, err := monitor.NewAddressMonitor(
-			m.tronClient,
+		addrMonitor, err := monitor.NewAddressMonitorFromSource(
+			m.source,
 			cfg,
 			m.logger,
 		)
@@ -494,15 +573,22 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 	// Store in map
 	m.monitors[sub.SubscriptionID] = wrapper
 
-	// Start monitor goroutine
-	go func() {
+	// Start the monitor. On the shared scanner Start only subscribes (no node read), so
+	// it runs here: the subscriptions loaded at startup are all registered before the
+	// scanner's first head read. A polling monitor reads the node in Start: background.
+	start := func() {
 		if err := monitorInstance.Start(); err != nil {
 			m.logger.Error().
 				Err(err).
 				Str("subscriptionId", sub.SubscriptionID).
 				Msg("Monitor error")
 		}
-	}()
+	}
+	if m.scanner != nil && sub.Address != "" {
+		start()
+	} else {
+		go start()
+	}
 
 	// Start event processor goroutine
 	go m.processEvents(wrapper)
@@ -565,22 +651,18 @@ func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 				}
 			}
 
-		case event := <-wrapper.EventChan:
+		case event, ok := <-wrapper.EventChan:
+			if !ok {
+				// The monitor stopped and closed its channel
+				return
+			}
 			// Take the current snapshot per event so a settings update applies
 			// from the next event on, without restarting the monitor.
 			sub := wrapper.current()
 
-			// Apply filters
-			if !m.matchesFilters(event, sub.Filters) {
+			// Usage event, then filters and routing
+			if !m.routeMonitorEvent(sub, event) {
 				continue
-			}
-
-			// Route event to clients
-			if err := m.eventRouter.RouteEvent(sub, event); err != nil {
-				m.logger.Error().
-					Err(err).
-					Str("subscriptionId", sub.SubscriptionID).
-					Msg("Failed to route event")
 			}
 
 			// Update subscription stats
@@ -602,6 +684,31 @@ func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 				Msg("Event processed")
 		}
 	}
+}
+
+// routeMonitorEvent hands a monitor event to the router: first the energy_usage event
+// (independent of the transfer filters: a failed call, or a call of any contract,
+// still consumed the owner's resources), then, when the event passes the
+// subscription's filters, the normal routing. It reports whether the event passed the
+// filters.
+func (m *Manager) routeMonitorEvent(sub *models.Subscription, event *monitor.AddressEvent) bool {
+	if sub == nil || event == nil {
+		return false
+	}
+
+	m.eventRouter.RouteUsage(sub, event)
+
+	if !m.matchesFilters(event, sub.Filters) {
+		return false
+	}
+
+	if err := m.eventRouter.RouteEvent(sub, event); err != nil {
+		m.logger.Error().
+			Err(err).
+			Str("subscriptionId", sub.SubscriptionID).
+			Msg("Failed to route event")
+	}
+	return true
 }
 
 // matchesFilters checks if an event matches subscription filters
@@ -665,18 +772,10 @@ func (m *Manager) ScanHistorical(subscriptionID string, fromBlock, toBlock int64
 	// Create a callback that routes events through the normal pipeline
 	callback := func(event *monitor.AddressEvent) {
 		// Apply the subscription's current filters (an update during the scan applies too)
+		// and route the event through the event router (usage event, TRC20 detection and
+		// Porto webhooks)
 		sub := wrapper.current()
-		if !m.matchesFilters(event, sub.Filters) {
-			return
-		}
-
-		// Route event through the event router (this triggers TRC20 detection and Porto webhooks)
-		if err := m.eventRouter.RouteEvent(sub, event); err != nil {
-			m.logger.Error().
-				Err(err).
-				Str("subscriptionId", subscriptionID).
-				Str("txHash", event.TransactionID).
-				Msg("Failed to route historical event")
+		if !m.routeMonitorEvent(sub, event) {
 			return
 		}
 

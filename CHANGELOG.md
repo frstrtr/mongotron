@@ -200,6 +200,52 @@ TronTXType="Smart Contract" SCTXType="Unknown Method (0xb9f412b0)"
 
 ## [Unreleased]
 
+### Added
+
+- **Shared block scanner** (`internal/blockchain/monitor/block_scanner.go`): one scanner
+  polls the head (header only when the node supports it), fetches and parses every block
+  once and fans its transactions out to the monitors of all watched addresses. N watched
+  addresses now cost one block fetch per block instead of N (plus N full head reads per
+  poll before). The transaction info of a matched transaction is read once for all the
+  watched addresses in it. Addresses behind the scanner catch up on their own and then
+  join; at startup, addresses within `monitor.catchUpWindow` blocks of each other are
+  caught up together. Config: `monitor.sharedScanner` (default true), `monitor.pollInterval`
+  (default 3s), `monitor.catchUpWindow` (default 1200 blocks).
+- **Porto event `energy_usage`**, posted to `webhooks.porto.usagePath` (default
+  `/v1/webhooks/mongotron/usage`) with the usual HMAC signatures, retries and backoff. Sent
+  for every transaction (successful or failed, with `success` and `result`) whose owner is
+  a watched address of a wallet type in `webhooks.porto.usageWalletTypes` (default
+  `["keep_level"]`, `"*"` for all), with the receipt's `energyUsage`, `energyUsageTotal`,
+  `originEnergyUsage`, `energyPenaltyTotal`, `energyFee`, `netUsage`, `netFee`, `fee` and
+  the subscription's wallet type, user ID, label and metadata. Delivery never blocks block
+  processing (bounded queue, background workers). `webhooks.porto.usageEnabled` (default
+  true) turns it off.
+- **Wallet type `keep_level`** for addresses watched for their resource usage only: they
+  produce `energy_usage` events and no transfer or operation events for Porto.
+- **Guarded watch list writes**: `failIfOtherWalletType: true` on `POST /api/v1/watchlist`
+  (and per entry on `/bulk`) answers 409 `wallet_type_conflict` with the existing row
+  instead of taking over an address watched under another wallet type;
+  `DELETE /api/v1/watchlist/{address}?walletType=T` stops the subscription only when it has
+  that type (409 otherwise). DELETE answers now include `walletType`.
+- Monitor events carry `energyUsageTotal`, `originEnergyUsage`, `energyPenaltyTotal`,
+  `receiptResult` and `fee` in `EventData` (WebSocket clients, stored events).
+- `TronClient.GetHeadBlockNumber` (header-only head read).
+
+### Changed
+
+- A watched address now also sees its own transactions of contract types without a
+  dedicated parser (account updates, account creation, contract settings, ...): the owner
+  is read from any contract. The subscription filters still decide what is routed.
+- The API server configures the event router (Porto client, network, usage events)
+  before the subscription manager starts, so events of the startup catch-up reach Porto.
+
+### Fixed
+
+- A block whose fetch failed was skipped at once by the per-address monitors; the shared
+  scanner retries it on the next poll (skipped only after 10 failures in a row).
+- An address monitor could send on its event channel after `Stop` closed it, and the
+  event loop could read a closed channel; both are guarded now.
+
 ### Planned Features
 
 #### High Priority

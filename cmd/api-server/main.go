@@ -74,18 +74,19 @@ func main() {
 	defer tronClient.Close()
 
 	// Initialize subscription manager
-	manager := subscription.NewManager(db, tronClient, &log)
-	if err := manager.Start(); err != nil {
-		log.Fatal().Err(err).Msg("Failed to start subscription manager")
-	}
-	defer func() {
-		if err := manager.Stop(); err != nil {
-			log.Error().Err(err).Msg("Failed to stop subscription manager")
-		}
-	}()
+	manager := subscription.NewManagerWithOptions(db, tronClient, &log, subscription.ManagerOptions{
+		SharedScanner: cfg.Monitor.SharedScanner,
+		PollInterval:  cfg.Monitor.PollInterval,
+		CatchUpWindow: cfg.Monitor.CatchUpWindow,
+	})
+	router := manager.GetEventRouter()
+
+	// The router is configured before the manager starts: monitors catch up from their
+	// stored block at once, and an event routed before the Porto client was set would
+	// never reach Porto.
 
 	// Per-subscription webhook posts are signed when a subscription secret is configured
-	manager.GetEventRouter().SetSubscriptionSecret(cfg.Webhooks.SubscriptionSecret)
+	router.SetSubscriptionSecret(cfg.Webhooks.SubscriptionSecret)
 
 	// Configure Porto API client if enabled
 	if cfg.Webhooks.Porto.Enabled {
@@ -97,8 +98,12 @@ func main() {
 			&log,
 		)
 		portoClient.SetOperationPath(cfg.Webhooks.Porto.OperationPath)
-		manager.GetEventRouter().SetPortoClient(portoClient)
-		manager.GetEventRouter().SetNetwork(cfg.Webhooks.Porto.Network)
+		portoClient.SetUsagePath(cfg.Webhooks.Porto.UsagePath)
+		router.SetPortoClient(portoClient)
+		router.SetNetwork(cfg.Webhooks.Porto.Network)
+		if cfg.Webhooks.Porto.UsageEnabled {
+			router.SetUsageEvents(cfg.Webhooks.Porto.UsageWalletTypes)
+		}
 		if cfg.Webhooks.Porto.Network == "" {
 			log.Error().Msg("Porto API webhook integration enabled but webhooks.porto.network is empty (tron-mainnet or tron-nile): PortoAPI ignores events without a network")
 		}
@@ -109,10 +114,27 @@ func main() {
 			Str("portoUrl", cfg.Webhooks.Porto.BaseURL).
 			Str("transferUrl", portoClient.TransferURL()).
 			Str("operationUrl", portoClient.OperationURL()).
+			Str("usageUrl", portoClient.UsageURL()).
+			Strs("usageWalletTypes", router.UsageWalletTypes()).
 			Str("network", cfg.Webhooks.Porto.Network).
 			Bool("signed", cfg.Webhooks.Porto.WebhookSecret != "").
 			Msg("Porto API webhook integration enabled")
 	}
+
+	log.Info().
+		Bool("sharedScanner", cfg.Monitor.SharedScanner).
+		Dur("pollInterval", cfg.Monitor.PollInterval).
+		Int64("catchUpWindow", cfg.Monitor.CatchUpWindow).
+		Msg("Block monitoring mode")
+
+	if err := manager.Start(); err != nil {
+		log.Fatal().Err(err).Msg("Failed to start subscription manager")
+	}
+	defer func() {
+		if err := manager.Stop(); err != nil {
+			log.Error().Err(err).Msg("Failed to stop subscription manager")
+		}
+	}()
 
 	// Initialize WebSocket hub
 	hub := websocket.NewHub(manager.GetEventRouter(), &log)
