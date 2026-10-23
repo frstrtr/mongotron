@@ -895,3 +895,32 @@ func TestScannerReportsASkippedBlock(t *testing.T) {
 		t.Fatal("a node that is down made the scanner skip a block")
 	}
 }
+
+// hangingHead is a node that accepts head reads but never answers them.
+type hangingHead struct{ *fakeChain }
+
+func (h hangingHead) GetHeadBlockNumber(ctx context.Context) (int64, error) {
+	<-ctx.Done()
+	return 0, ctx.Err()
+}
+
+func (h hangingHead) GetNowBlock(ctx context.Context) (*core.Block, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestHeadReadsHaveADeadline(t *testing.T) {
+	chain := newFakeChain(testHead)
+	sc := NewBlockScanner(hangingHead{chain}, ScannerConfig{PollInterval: time.Hour, ReadTimeout: 20 * time.Millisecond}, testLog())
+
+	start := time.Now()
+	if sc.nodeAnswers(context.Background()) {
+		t.Fatal("a node that never answers does not answer")
+	}
+	if err := sc.scanOnce(context.Background()); err == nil {
+		t.Fatal("scanOnce must fail on a hanging head read")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("head reads took %v: no deadline", elapsed)
+	}
+}

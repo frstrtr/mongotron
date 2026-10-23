@@ -280,7 +280,9 @@ func TestUsageIsRoutedEvenWhenTheFiltersDropTheEvent(t *testing.T) {
 	failed := contractCallEvent(t, invoiceAdr, txInfo(core.TransactionInfo_FAILED,
 		&core.ResourceReceipt{EnergyUsage: 30_000, EnergyUsageTotal: 30_000, Result: core.Transaction_Result_REVERT}, 0))
 	// The watchlist filters pass successful transactions only
-	assert.False(t, m.routeMonitorEvent(keepLevelSub(), failed))
+	routed, err := m.routeMonitorEvent(keepLevelSub(), failed)
+	assert.False(t, routed)
+	assert.NoError(t, err)
 
 	got := waitFor(t, ch)
 	assert.Equal(t, webhook.DefaultUsagePath, got.path)

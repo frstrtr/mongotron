@@ -20,6 +20,10 @@ const (
 	// DefaultCatchUpWindow is how far (in blocks, about one hour) a watched address may be
 	// behind the newest one at startup and still be caught up by the shared scanner.
 	DefaultCatchUpWindow int64 = 1200
+	// DefaultReadTimeout bounds every head read and block fetch of the scanner (and the
+	// head reads of a catch-up), so a node that accepts connections but never answers
+	// cannot hang it.
+	DefaultReadTimeout = 30 * time.Second
 	// DefaultMaxBlockRetries is how many times in a row the scanner retries one block
 	// before it skips it (the per-address monitors skipped a failed block at once).
 	// Only failures while the node answers the head count: a node that is down never
@@ -46,6 +50,8 @@ type ScannerConfig struct {
 	// OnSkip, when set, is called for every skipped block (outside the scanner's locks),
 	// so the caller can record the gap and retry it later.
 	OnSkip func(SkippedBlock)
+	// ReadTimeout bounds each head read and block fetch (default 30 s).
+	ReadTimeout time.Duration
 }
 
 // SkippedBlock describes a block given up after MaxBlockRetries failed fetches.
@@ -135,6 +141,9 @@ func NewBlockScanner(src BlockSource, cfg ScannerConfig, log *logger.Logger) *Bl
 	if cfg.MaxBlockRetries <= 0 {
 		cfg.MaxBlockRetries = DefaultMaxBlockRetries
 	}
+	if cfg.ReadTimeout <= 0 {
+		cfg.ReadTimeout = DefaultReadTimeout
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &BlockScanner{
 		src:    src,
@@ -221,8 +230,11 @@ func (s *BlockScanner) loop() {
 }
 
 // readHead returns the head block number and, when it had to download the head block
-// to learn it, the block itself (so it is not fetched a second time).
+// to learn it, the block itself (so it is not fetched a second time). The whole read
+// is bounded by ReadTimeout.
 func (s *BlockScanner) readHead(ctx context.Context) (int64, *core.Block, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.ReadTimeout)
+	defer cancel()
 	s.headReads.Add(1)
 	s.mu.Lock()
 	tryHeader := !s.headerOff
@@ -302,7 +314,7 @@ func (s *BlockScanner) scanOnce(ctx context.Context) error {
 }
 
 func (s *BlockScanner) fetchBlock(ctx context.Context, num int64) (*core.Block, error) {
-	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	fetchCtx, cancel := context.WithTimeout(ctx, s.cfg.ReadTimeout)
 	defer cancel()
 	s.blockFetches.Add(1)
 	block, err := s.src.GetBlockByNum(fetchCtx, num)

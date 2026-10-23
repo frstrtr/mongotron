@@ -26,6 +26,7 @@ const (
 	maxPendingGaps   = 1000 // gaps kept in memory (all are persisted)
 	gapStoreTimeout  = 5 * time.Second
 	gapFetchTimeout  = 30 * time.Second
+	gapHeadTimeout   = 30 * time.Second
 	gapLoadAtStartup = maxPendingGaps
 )
 
@@ -61,9 +62,15 @@ type MonitoringStats struct {
 	Gaps          GapStats              `json:"gaps"`
 }
 
+// pendingGap is a gap waiting for a retry and when it was last tried.
+type pendingGap struct {
+	gap       *models.ScannerGap
+	lastTried time.Time // zero: never tried
+}
+
 type gapTracker struct {
 	mu              sync.Mutex
-	pending         []*models.ScannerGap
+	pending         []*pendingGap // oldest block first
 	recorded        atomic.Int64
 	recovered       atomic.Int64
 	abandoned       atomic.Int64
@@ -78,26 +85,47 @@ func (g *gapTracker) add(gaps ...*models.ScannerGap) (dropped int) {
 			dropped++
 			continue
 		}
-		g.pending = append(g.pending, gap)
+		g.pending = append(g.pending, &pendingGap{gap: gap})
 	}
-	sort.SliceStable(g.pending, func(i, j int) bool { return g.pending[i].BlockNumber < g.pending[j].BlockNumber })
+	sort.SliceStable(g.pending, func(i, j int) bool { return g.pending[i].gap.BlockNumber < g.pending[j].gap.BlockNumber })
 	return dropped
 }
 
-func (g *gapTracker) batch(n int) []*models.ScannerGap {
+func (g *gapTracker) count() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if n > len(g.pending) {
-		n = len(g.pending)
+	return len(g.pending)
+}
+
+// batch takes the n gaps tried least recently (never tried first, then the oldest
+// try; the lower block on a tie) and marks them tried now. A gap that keeps failing
+// therefore goes to the back: it never starves the others.
+func (g *gapTracker) batch(n int, now time.Time) []*models.ScannerGap {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	order := append([]*pendingGap(nil), g.pending...)
+	sort.SliceStable(order, func(i, j int) bool {
+		if !order[i].lastTried.Equal(order[j].lastTried) {
+			return order[i].lastTried.Before(order[j].lastTried)
+		}
+		return order[i].gap.BlockNumber < order[j].gap.BlockNumber
+	})
+	if n > len(order) {
+		n = len(order)
 	}
-	return append([]*models.ScannerGap(nil), g.pending[:n]...)
+	out := make([]*models.ScannerGap, 0, n)
+	for _, p := range order[:n] {
+		p.lastTried = now
+		out = append(out, p.gap)
+	}
+	return out
 }
 
 func (g *gapTracker) remove(gap *models.ScannerGap) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for i, p := range g.pending {
-		if p == gap {
+		if p.gap == gap {
 			g.pending = append(g.pending[:i], g.pending[i+1:]...)
 			return
 		}
@@ -109,7 +137,7 @@ func (g *gapTracker) stats() GapStats {
 	pending := len(g.pending)
 	var blocks []int64
 	for i := 0; i < pending && i < 20; i++ {
-		blocks = append(blocks, g.pending[i].BlockNumber)
+		blocks = append(blocks, g.pending[i].gap.BlockNumber)
 	}
 	g.mu.Unlock()
 	return GapStats{
@@ -199,14 +227,51 @@ func (m *Manager) gapRetryLoop() {
 	}
 }
 
-// retryGaps retries the oldest pending gaps once each.
+// nodeAnswers reads the head once (header only when the source supports it), with a
+// deadline, and returns the error when the node does not answer.
+func (m *Manager) nodeAnswers(ctx context.Context) error {
+	if m.source == nil {
+		return errors.New("no block source")
+	}
+	ctx, cancel := context.WithTimeout(ctx, gapHeadTimeout)
+	defer cancel()
+	if hr, ok := m.source.(interface {
+		GetHeadBlockNumber(ctx context.Context) (int64, error)
+	}); ok {
+		if _, err := hr.GetHeadBlockNumber(ctx); err == nil {
+			return nil
+		}
+	}
+	_, err := m.source.GetNowBlock(ctx)
+	return err
+}
+
+// retryGaps retries up to gapRetryBatch pending gaps, those tried least recently
+// first. A retry counts as an attempt only while the node answers a head read, the
+// same rule as the scanner and the catch-up: during an outage no gap gets closer to
+// being abandoned.
 func (m *Manager) retryGaps(ctx context.Context) {
-	for _, gap := range m.gaps.batch(gapRetryBatch) {
+	pending := m.gaps.count()
+	if pending == 0 {
+		return
+	}
+	if err := m.nodeAnswers(ctx); err != nil {
+		m.logger.Warn().Err(err).Int("pending", pending).
+			Msg("Node does not answer: skipped-block retries wait, no attempt counted")
+		return
+	}
+	for _, gap := range m.gaps.batch(gapRetryBatch, time.Now()) {
 		if ctx.Err() != nil {
 			return
 		}
-		gap.Attempts++
 		err := m.retryGap(ctx, gap)
+		if err != nil && m.nodeAnswers(ctx) != nil {
+			// The node stopped answering during the round: this try does not count
+			m.logger.Warn().Err(err).Int64("block", gap.BlockNumber).
+				Msg("Node stopped answering: skipped-block retries wait, no attempt counted")
+			return
+		}
+		gap.Attempts++
 		now := time.Now()
 		if err == nil {
 			m.gaps.remove(gap)
@@ -283,16 +348,25 @@ func (m *Manager) retryGap(ctx context.Context, gap *models.ScannerGap) error {
 	}
 	m.mu.RUnlock()
 
+	var routeErr error
 	for _, w := range targets {
 		w := w
 		w.Monitor.(*monitor.AddressMonitor).ScanBlock(block, func(event *monitor.AddressEvent) {
 			sub := w.current()
-			if m.routeMonitorEvent(sub, event) && m.db != nil {
+			routed, err := m.routeMonitorEvent(sub, event)
+			if err != nil {
+				routeErr = err
+				return
+			}
+			if routed && m.db != nil {
 				if err := m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, sub.SubscriptionID); err != nil {
 					m.logger.Warn().Err(err).Str("subscriptionId", sub.SubscriptionID).Msg("Failed to count event")
 				}
 			}
 		})
+	}
+	if routeErr != nil {
+		return fmt.Errorf("block %d read but not routed: %w", gap.BlockNumber, routeErr)
 	}
 	return nil
 }

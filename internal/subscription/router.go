@@ -133,6 +133,34 @@ func (r *EventRouter) RouteEvent(sub *models.Subscription, event *monitor.Addres
 	}
 }
 
+// RouteEventWait queues an event for routing like RouteEvent, but waits for room in
+// the queue (until ctx ends) instead of dropping the event: an event its caller counts
+// as handled is always queued. It returns an error only when ctx ended first.
+func (r *EventRouter) RouteEventWait(ctx context.Context, sub *models.Subscription, event *monitor.AddressEvent) error {
+	req := &RouteEventRequest{
+		Subscription: sub,
+		Event:        event,
+	}
+
+	select {
+	case r.eventQueue <- req:
+		return nil
+	default:
+	}
+
+	r.logger.Warn().
+		Str("subscriptionId", sub.SubscriptionID).
+		Str("txHash", event.TransactionID).
+		Int64("block", event.BlockNumber).
+		Msg("Event queue full: waiting for room")
+	select {
+	case r.eventQueue <- req:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("event queue full and %w", ctx.Err())
+	}
+}
+
 // routeEvent routes an event to all registered destinations
 func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 	// Convert event to JSON

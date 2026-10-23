@@ -27,6 +27,13 @@ type gapSource struct {
 	blocks map[int64]*core.Block
 	fail   map[int64]int // remaining failures; negative = always
 	infos  map[string]*core.TransactionInfo
+	down   bool // every read fails (node unreachable)
+}
+
+func (s *gapSource) setDown(down bool) {
+	s.mu.Lock()
+	s.down = down
+	s.mu.Unlock()
 }
 
 func newGapSource(head int64) *gapSource {
@@ -78,12 +85,18 @@ func (s *gapSource) setFail(n int64, times int) {
 func (s *gapSource) GetNowBlock(ctx context.Context) (*core.Block, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.down {
+		return nil, errors.New("node unreachable")
+	}
 	return s.blocks[s.head], nil
 }
 
 func (s *gapSource) GetBlockByNum(ctx context.Context, n int64) (*core.Block, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.down {
+		return nil, errors.New("node unreachable")
+	}
 	if left := s.fail[n]; left != 0 {
 		if left > 0 {
 			s.fail[n] = left - 1
@@ -284,4 +297,160 @@ func TestScannerSkipReachesTheGapStoreAndTheRetryRoutesTheDeposit(t *testing.T) 
 	m.retryGaps(context.Background())
 	assert.Contains(t, queued(m), ids[0]+"@"+invoiceAdr, "the skipped deposit is routed by the retry")
 	assert.Equal(t, int64(1), m.MonitoringStats().Gaps.Recovered)
+}
+
+func TestGapRetriesCountNoAttemptWhileTheNodeIsDown(t *testing.T) {
+	src := newGapSource(5000)
+	m, store := gapManager(t, src, DefaultManagerOptions(), invoiceAdr)
+	m.gapMaxAttempts = 3
+	block, ids := src.addTransfers(t, invoiceAdr)
+	m.recordGap(monitor.SkippedBlock{Block: block, Err: "x", At: time.Now()})
+
+	src.setDown(true)
+	for round := 0; round < 5; round++ { // more rounds than gapMaxAttempts
+		m.retryGaps(context.Background())
+	}
+	st := m.MonitoringStats().Gaps
+	assert.Equal(t, 1, st.Pending, "an outage must not abandon the gap")
+	assert.Equal(t, int64(0), st.Abandoned)
+	created, _, failures := store.snapshot()
+	assert.Empty(t, failures[created[0].ID], "no attempt recorded during the outage")
+
+	src.setDown(false)
+	m.retryGaps(context.Background())
+	st = m.MonitoringStats().Gaps
+	assert.Equal(t, int64(1), st.Recovered)
+	assert.Equal(t, 0, st.Pending)
+	assert.Equal(t, []string{ids[0] + "@" + invoiceAdr}, queued(m), "the deposit is routed once the node is back")
+	_, retried, _ := store.snapshot()
+	assert.Equal(t, 1, retried[created[0].ID], "one counted attempt")
+}
+
+func TestUnreadableOldGapsDoNotStarveNewerOnes(t *testing.T) {
+	src := newGapSource(5000)
+	m, _ := gapManager(t, src, DefaultManagerOptions(), invoiceAdr)
+	for b := int64(4981); b <= 4995; b++ { // 15 old gaps that never read
+		src.setFail(b, -1)
+		m.recordGap(monitor.SkippedBlock{Block: b, Err: "x", At: time.Now()})
+	}
+	newer, ids := src.addTransfers(t, invoiceAdr)
+	m.recordGap(monitor.SkippedBlock{Block: newer, Err: "x", At: time.Now()})
+
+	m.retryGaps(context.Background()) // the 10 lowest blocks, all fail
+	assert.Equal(t, int64(0), m.MonitoringStats().Gaps.Recovered)
+	m.retryGaps(context.Background()) // the 6 not tried yet come first
+	st := m.MonitoringStats().Gaps
+	assert.Equal(t, int64(1), st.Recovered, "the newer gap is reached in the second round")
+	assert.Equal(t, 15, st.Pending)
+	assert.Equal(t, []string{ids[0] + "@" + invoiceAdr}, queued(m))
+}
+
+// chanMonitor is a monitor whose channel the test fills.
+type chanMonitor struct {
+	ch   chan *monitor.AddressEvent
+	last int64
+	once sync.Once
+}
+
+func (c *chanMonitor) Start() error                         { return nil }
+func (c *chanMonitor) Stop()                                { c.once.Do(func() { close(c.ch) }) }
+func (c *chanMonitor) Events() <-chan *monitor.AddressEvent { return c.ch }
+func (c *chanMonitor) GetLastBlockNumber() int64            { return c.last }
+
+func chanWrapper(mon *chanMonitor, current int64) *MonitorWrapper {
+	return &MonitorWrapper{
+		Monitor: mon,
+		Subscription: &models.Subscription{SubscriptionID: "sub_chan", Address: invoiceAdr, Status: "active",
+			WalletType: "invoice", Filters: FiltersForAssets([]string{"TRX"}, nil), CurrentBlock: current},
+		EventChan: mon.ch,
+		StopChan:  make(chan struct{}),
+	}
+}
+
+func TestProgressIsNotStoredWhileEventsWaitInTheChannel(t *testing.T) {
+	l := logger.NewDefault()
+	m := newManager(nil, nil, &l, DefaultManagerOptions())
+	mon := &chanMonitor{ch: make(chan *monitor.AddressEvent, 10), last: 68900010}
+	w := chanWrapper(mon, 68900000)
+
+	mon.ch <- trxTransferEvent(1) // block 68900001, already counted by the monitor
+	assert.False(t, m.saveProgress(w), "an event is still in the channel")
+	assert.Equal(t, int64(68900000), w.current().CurrentBlock)
+
+	m.handleMonitorEvent(w, <-mon.ch)
+	assert.True(t, m.saveProgress(w))
+	assert.Equal(t, int64(68900010), w.current().CurrentBlock)
+}
+
+func TestStoppingRoutesTheEventsStillInTheChannel(t *testing.T) {
+	l := logger.NewDefault()
+	m := newManager(nil, nil, &l, DefaultManagerOptions())
+	mon := &chanMonitor{ch: make(chan *monitor.AddressEvent, 10), last: 68900001}
+	w := chanWrapper(mon, 68900000)
+	for i := 1; i <= 3; i++ {
+		mon.ch <- trxTransferEvent(int64(i))
+	}
+	close(w.StopChan) // the stop is seen before any event
+
+	done := make(chan struct{})
+	go func() { m.processEvents(w); close(done) }()
+	waitUntil(t, func() bool { return len(m.eventRouter.eventQueue) == 3 })
+	mon.Stop() // closes the channel: the drain ends
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("processEvents did not end after the channel closed")
+	}
+	assert.Len(t, queued(m), 3, "all buffered events are routed")
+}
+
+func TestRoutingWaitsForRoomInsteadOfDropping(t *testing.T) {
+	l := logger.NewDefault()
+	m := newManager(nil, nil, &l, DefaultManagerOptions())
+	m.eventRouter.eventQueue = make(chan *RouteEventRequest, 1)
+	m.eventRouter.eventQueue <- &RouteEventRequest{}
+	sub := chanWrapper(&chanMonitor{ch: make(chan *monitor.AddressEvent)}, 0).Subscription
+
+	type result struct {
+		routed bool
+		err    error
+	}
+	res := make(chan result, 1)
+	go func() {
+		routed, err := m.routeMonitorEvent(sub, trxTransferEvent(1))
+		res <- result{routed, err}
+	}()
+	select {
+	case r := <-res:
+		t.Fatalf("returned %+v with the queue full: the event must wait, not be dropped", r)
+	case <-time.After(50 * time.Millisecond):
+	}
+	<-m.eventRouter.eventQueue // room
+	r := <-res
+	assert.True(t, r.routed)
+	assert.NoError(t, r.err)
+	assert.Len(t, m.eventRouter.eventQueue, 1, "the event is queued")
+}
+
+func TestAnEventThatCannotBeQueuedIsNotCountedAsHandled(t *testing.T) {
+	l := logger.NewDefault()
+	m := newManager(nil, nil, &l, DefaultManagerOptions())
+	m.eventRouter.eventQueue = make(chan *RouteEventRequest, 1)
+	m.eventRouter.eventQueue <- &RouteEventRequest{}
+	w := chanWrapper(&chanMonitor{ch: make(chan *monitor.AddressEvent)}, 68900000)
+
+	done := make(chan struct{})
+	go func() { m.handleMonitorEvent(w, trxTransferEvent(1)); close(done) }()
+	time.Sleep(20 * time.Millisecond)
+	m.cancel() // the manager stops while the queue is full
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("routing did not give up on stop")
+	}
+	assert.Equal(t, int64(68900000), w.current().CurrentBlock, "the current block must not pass the unrouted event")
+
+	routed, err := m.routeMonitorEvent(w.Subscription, trxTransferEvent(1))
+	assert.False(t, routed)
+	assert.Error(t, err)
 }
