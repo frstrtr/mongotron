@@ -886,10 +886,48 @@ addresses are in it. Each monitor keeps its own event channel, filters and progr
 At startup, watched addresses whose stored block is at most `monitor.catchUpWindow`
 blocks behind the newest one are caught up together by the scanner; an address further
 behind (or one added later with an older `startBlock`) catches up on its own first and
-then joins the scanner. A block that cannot be fetched is retried on the next poll and
-skipped only after 10 failures in a row.
+then joins the scanner.
+
+A block that cannot be fetched is retried one poll interval later, by the scanner and by
+a catch-up alike. A failure counts only while the node answers the head, so a node that
+is down never makes a block be skipped. After 10 counted failures in a row the block is
+skipped and recorded as a gap (next section).
+
+On the shared scanner an event waits for room in its monitor's channel instead of being
+dropped: the stored `currentBlock` of an address never passes an event that was not
+handed to the router. Only that address's queue waits; the scanner and the other
+addresses go on.
 
 `monitor.sharedScanner: false` restores one polling loop per watched address.
+
+### Skipped blocks and monitoring
+
+Every skipped block is written to the `scanner_gaps` collection (block, address for a
+catch-up gap or empty for the scanner, error, time, retry attempts, last error, retried
+or abandoned time) and logged as a Warn with stable fields: `event=block_skipped`
+(scanner) and `event=scanner_gap_recorded` (manager), with `block`, `address`, `error`.
+The manager retries pending gaps every minute, 10 per round: one block read per gap,
+then the block's events are routed through the normal pipeline for every watched
+address (or the one address of a catch-up gap). After 60 failed retries (about an hour)
+a gap is abandoned with an Error log (`event=scanner_gap_abandoned`). Gaps a previous
+run left are loaded at start.
+
+`GET /api/v1/health` carries the counters to alert on:
+
+```json
+"monitoring": {
+  "sharedScanner": true,
+  "scanner": {"headReads": 1201, "headerOnlyReads": 1201, "fullHeadReads": 0, "blockFetches": 1200,
+              "blocksScanned": 1200, "catchUpFetches": 0, "skippedBlocks": 0, "matches": 37,
+              "txEvents": 35, "subscribers": 12, "cursor": 68900000, "head": 68900000},
+  "usage": {"queued": 9, "sent": 9, "failed": 0, "dropped": 0},
+  "gaps": {"recorded": 0, "pending": 0, "recovered": 0, "abandoned": 0, "persistFailures": 0}
+}
+```
+
+Alert on `scanner.skippedBlocks` or `gaps.pending` above 0 for long, `gaps.abandoned`
+above 0, `usage.dropped` or `usage.failed` growing, and `scanner.head - scanner.cursor`
+growing.
 
 Measured in `TestBlockFetchesBeforeAndAfterSharedScanner` (20 blocks):
 
@@ -956,8 +994,8 @@ transactions where the watched address is only the receiver. The transfer filter
 subscription (`assetTypes`, success only) do not apply to it.
 
 Delivery runs on background workers fed by a bounded queue: block processing never waits
-for it, and a full queue drops the event (logged). Treat the event as a hint ("this
-address just used resources"), not as an exact ledger.
+for it, and a full queue drops the event (counted in `usage.dropped` and logged). Treat
+the event as a hint ("this address just used resources"), not as an exact ledger.
 
 ```json
 {
@@ -1011,6 +1049,19 @@ address just used resources"), not as an exact ledger.
 | `energyFee`, `netFee`, `fee` | SUN burned for energy, for bandwidth, and the transaction's total fee |
 | `netUsage` | bandwidth taken from the owner's staked or free bandwidth |
 | `walletType`, `userId`, `label`, `metadata`, `subscriptionId`, `watchedAddress` | from the watch list registration |
+
+### Rules for the Porto side
+
+- Register a `keep_level` address with `"failIfOtherWalletType": true` and remove it
+  with `DELETE /api/v1/watchlist/{address}?walletType=keep_level`, always. Without them
+  an upsert takes over, and a removal stops, an address watched under another type (an
+  invoice or a platform address).
+- The usage route (`/v1/webhooks/mongotron/usage`) must exist on Porto before any
+  `keep_level` address is registered: a 404 is a 4xx answer and is not retried, so
+  those events are lost.
+- `energy_usage` events are hints only (a full queue drops them; a node read stays the
+  source of truth). Transfer crediting keeps deduplicating on `txHash`: a retried gap or
+  a catch-up can deliver a transfer event again.
 
 ### Configuration
 

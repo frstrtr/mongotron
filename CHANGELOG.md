@@ -231,6 +231,13 @@ TronTXType="Smart Contract" SCTXType="Unknown Method (0xb9f412b0)"
   `receiptResult` and `fee` in `EventData` (WebSocket clients, stored events).
 - `TronClient.GetHeadBlockNumber` (header-only head read).
 
+- **Skipped blocks are never silent**: every block the scanner (or a catch-up) skips
+  is written to the `scanner_gaps` collection, logged with stable fields and retried
+  every minute (one block read per gap, events routed for the addresses concerned) for
+  up to 60 attempts. `GET /api/v1/health` gains a `monitoring` object with the scanner,
+  `energy_usage` delivery and gap counters.
+- `AddressMonitor.ScanBlock` routes the address's events of an already fetched block.
+
 ### Changed
 
 - A watched address now also sees its own transactions of contract types without a
@@ -242,7 +249,13 @@ TronTXType="Smart Contract" SCTXType="Unknown Method (0xb9f412b0)"
 ### Fixed
 
 - A block whose fetch failed was skipped at once by the per-address monitors; the shared
-  scanner retries it on the next poll (skipped only after 10 failures in a row).
+  scanner, and an address catching up on its own, retry it every poll interval and skip
+  it only after 10 failures in a row counted while the node answers the head (then it
+  is recorded and retried as a gap).
+- On the shared scanner an event waits for room in its monitor's channel instead of
+  being dropped, so the stored block of an address never passes an unrouted event.
+- Starting a stopped address monitor is refused; an interrupted catch-up keeps its
+  progress; each monitor gets its own copy of a shared transaction's `EventData`.
 - An address monitor could send on its event channel after `Stop` closed it, and the
   event loop could read a closed channel; both are guarded now.
 
