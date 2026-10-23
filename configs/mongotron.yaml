@@ -29,6 +29,17 @@ blockchain:
       backoff_interval: 5s
       keep_alive: 60s
 
+# Block monitoring of watched addresses
+monitor:
+  # One shared scanner fetches and parses each block once for every watched address.
+  # false = one polling loop per watched address (one block fetch per block per address).
+  sharedScanner: true
+  # How often the head is polled
+  pollInterval: 3s
+  # At startup, watched addresses at most this many blocks behind the newest one are
+  # caught up together by the scanner; an address further behind catches up on its own.
+  catchUpWindow: 1200
+
 worker_pool:
   workers: 1000
   queue_size: 100000
@@ -56,7 +67,7 @@ webhooks:
   # Porto API Integration for USDT/TRC20 transfer monitoring
   porto:
     enabled: true
-    # Porto API base URL, e.g. PORTO_API_URL=http://192.168.100.3:8000 (use an IP or a name
+    # Porto API base URL, e.g. PORTO_API_URL=http://porto.example.com:8000 (use an IP or a name
     # this host can resolve). Unset = transfer events are not delivered (logged at startup).
     baseUrl: "${PORTO_API_URL}"
     webhookPath: "/v1/webhooks/mongotron/transfer"
@@ -65,6 +76,13 @@ webhooks:
     webhookSecret: "${MONGOTRON_WEBHOOK_SECRET}"
     # Operation (gas station) events endpoint
     operationPath: "/v1/webhooks/mongotron/operation"
+    # energy_usage events: one per transaction (successful or failed) sent BY a watched
+    # address of the listed wallet types, with the receipt's energy and bandwidth figures.
+    # "*" = every wallet type. keep_level addresses get only these events (no transfer or
+    # operation events).
+    usageEnabled: true
+    usagePath: "/v1/webhooks/mongotron/usage"
+    usageWalletTypes: ["keep_level"]
     network: "tron-nile"
 
 api:

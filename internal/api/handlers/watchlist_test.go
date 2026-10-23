@@ -340,3 +340,154 @@ func TestWatchListResponse_AssetTypesAlwaysPresent(t *testing.T) {
 	assert.Contains(t, string(raw), `"TransferContract"`)
 	assert.Equal(t, WalletTypeGeneral, row.WalletType)
 }
+
+const keepLevelBody = `{"address":"` + watchAddr + `","walletType":"keep_level","userId":"keep-level:42","label":"keep-level order 42","failIfOtherWalletType":true,"metadata":{"keep_level_order_id":42}}`
+
+func deleteWatch(t *testing.T, app *fiber.App, path string) (int, map[string]interface{}) {
+	t.Helper()
+	resp, err := app.Test(httptest.NewRequest("DELETE", path, nil))
+	require.NoError(t, err)
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &out), string(raw))
+	return resp.StatusCode, out
+}
+
+func getWatch(t *testing.T, app *fiber.App, path string) (int, []byte) {
+	t.Helper()
+	resp, err := app.Test(httptest.NewRequest("GET", path, nil))
+	require.NoError(t, err)
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, raw
+}
+
+func TestKeepLevelRegistrationCarriesTypeAndMetadata(t *testing.T) {
+	fake := newFakeWatchManager()
+	app := watchApp(fake)
+
+	status, row, _ := postWatch(t, app, keepLevelBody)
+	require.Equal(t, fiber.StatusCreated, status)
+	assert.Equal(t, WalletTypeKeepLevel, row.WalletType)
+	assert.Equal(t, "keep-level:42", row.UserID)
+	assert.Equal(t, float64(42), row.Metadata["keep_level_order_id"])
+
+	// GET shows the type and the metadata
+	code, raw := getWatch(t, app, "/api/v1/watchlist/"+watchAddr)
+	require.Equal(t, fiber.StatusOK, code)
+	var single WatchListResponse
+	require.NoError(t, json.Unmarshal(raw, &single))
+	assert.Equal(t, WalletTypeKeepLevel, single.WalletType)
+	assert.Equal(t, float64(42), single.Metadata["keep_level_order_id"])
+	assert.Equal(t, "active", single.Status)
+
+	code, raw = getWatch(t, app, "/api/v1/watchlist?walletType=keep_level")
+	require.Equal(t, fiber.StatusOK, code)
+	var list struct {
+		WatchList []WatchListResponse `json:"watchList"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &list))
+	require.Len(t, list.WatchList, 1)
+
+	// Registering the same address again under the same type updates it in place
+	status, again, _ := postWatch(t, app, keepLevelBody)
+	assert.Equal(t, fiber.StatusOK, status)
+	assert.Equal(t, row.SubscriptionID, again.SubscriptionID)
+}
+
+func TestGuardedRegistrationNeverOverwritesAnotherWalletType(t *testing.T) {
+	fake := newFakeWatchManager()
+	app := watchApp(fake)
+	_, invoice, _ := postWatch(t, app, invoiceTRC20Body)
+
+	status, _, generic := postWatch(t, app, keepLevelBody)
+	assert.Equal(t, fiber.StatusConflict, status)
+	assert.Equal(t, "wallet_type_conflict", generic["error"])
+	existing := generic["existing"].(map[string]interface{})
+	assert.Equal(t, "invoice", existing["walletType"])
+	assert.Equal(t, invoice.SubscriptionID, existing["subscriptionId"])
+	assert.Equal(t, 0, fake.updates, "the invoice subscription must not change")
+	assert.Equal(t, "invoice", fake.activeFor(watchAddr)[0].WalletType)
+
+	// Without the guard the upsert keeps its old meaning (the caller's type wins)
+	status, row, _ := postWatch(t, app, `{"address":"`+watchAddr+`","walletType":"keep_level"}`)
+	assert.Equal(t, fiber.StatusOK, status)
+	assert.Equal(t, WalletTypeKeepLevel, row.WalletType)
+}
+
+func TestGuardTreatsAnOmittedWalletTypeAsGeneral(t *testing.T) {
+	fake := newFakeWatchManager()
+	app := watchApp(fake)
+	_, first, _ := postWatch(t, app, `{"address":"`+watchAddr+`"}`)
+	require.Equal(t, WalletTypeGeneral, first.WalletType)
+
+	status, row, _ := postWatch(t, app, `{"address":"`+watchAddr+`","failIfOtherWalletType":true,"label":"x"}`)
+	assert.Equal(t, fiber.StatusOK, status)
+	assert.Equal(t, first.SubscriptionID, row.SubscriptionID)
+
+	status, _, _ = postWatch(t, app, keepLevelBody)
+	assert.Equal(t, fiber.StatusConflict, status, "general is another type than keep_level")
+}
+
+func TestBulkGuardReportsTheConflict(t *testing.T) {
+	fake := newFakeWatchManager()
+	app := watchApp(fake)
+	postWatch(t, app, invoiceTRC20Body)
+
+	body := `{"addresses":[{"address":"` + watchAddr + `","walletType":"keep_level","failIfOtherWalletType":true}]}`
+	req := httptest.NewRequest("POST", "/api/v1/watchlist/bulk", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	raw, _ := io.ReadAll(resp.Body)
+	var out BulkWatchResponse
+	require.NoError(t, json.Unmarshal(raw, &out))
+	require.Len(t, out.Failed, 1)
+	assert.Contains(t, out.Failed[0].Error, "wallet_type_conflict")
+	assert.Equal(t, 0, out.Added)
+	assert.Equal(t, 0, fake.updates)
+}
+
+func TestRemoveFromWatchListWalletTypeGuard(t *testing.T) {
+	fake := newFakeWatchManager()
+	app := watchApp(fake)
+	postWatch(t, app, invoiceTRC20Body)
+
+	status, out := deleteWatch(t, app, "/api/v1/watchlist/"+watchAddr+"?walletType=keep_level")
+	assert.Equal(t, fiber.StatusConflict, status)
+	assert.Equal(t, "wallet_type_conflict", out["error"])
+	assert.Equal(t, "invoice", out["walletType"])
+	assert.Equal(t, 0, fake.unsubscribes, "another type's subscription must keep running")
+	assert.Len(t, fake.activeFor(watchAddr), 1)
+
+	status, out = deleteWatch(t, app, "/api/v1/watchlist/"+watchAddr+"?walletType=bogus")
+	assert.Equal(t, fiber.StatusBadRequest, status)
+	assert.Equal(t, "invalid_wallet_type", out["error"])
+
+	status, out = deleteWatch(t, app, "/api/v1/watchlist/"+watchAddr+"?walletType=invoice")
+	assert.Equal(t, fiber.StatusOK, status)
+	assert.Equal(t, "stopped", out["status"])
+	assert.Equal(t, 1, fake.unsubscribes)
+
+	status, out = deleteWatch(t, app, "/api/v1/watchlist/"+watchAddr+"?walletType=invoice")
+	assert.Equal(t, fiber.StatusOK, status)
+	assert.Equal(t, "Address already stopped", out["message"])
+
+	status, _ = deleteWatch(t, app, "/api/v1/watchlist/TSa6Hr3mmPsCkLcQFEjieEtSeW1ASY6UVV?walletType=keep_level")
+	assert.Equal(t, fiber.StatusNotFound, status)
+}
+
+func TestKeepLevelUnregisterAndRegisterAgain(t *testing.T) {
+	fake := newFakeWatchManager()
+	app := watchApp(fake)
+	_, first, _ := postWatch(t, app, keepLevelBody)
+
+	status, out := deleteWatch(t, app, "/api/v1/watchlist/"+watchAddr+"?walletType=keep_level")
+	require.Equal(t, fiber.StatusOK, status)
+	assert.Equal(t, "keep_level", out["walletType"])
+	assert.Empty(t, fake.activeFor(watchAddr))
+
+	status, second, _ := postWatch(t, app, `{"address":"`+watchAddr+`","walletType":"keep_level","failIfOtherWalletType":true,"metadata":{"keep_level_order_id":43}}`)
+	assert.Equal(t, fiber.StatusCreated, status)
+	assert.NotEqual(t, first.SubscriptionID, second.SubscriptionID)
+	assert.Equal(t, float64(43), second.Metadata["keep_level_order_id"])
+}

@@ -90,34 +90,123 @@ var (
 type Manager struct {
 	db          *storage.Database
 	tronClient  *client.TronClient
+	source      monitor.BlockSource
+	scanner     *monitor.BlockScanner // nil when every address polls on its own
+	opts        ManagerOptions
 	logger      *logger.Logger
 	monitors    map[string]*MonitorWrapper // key: subscription_id
 	eventRouter *EventRouter
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
+
+	// Skipped blocks: persisted in scanner_gaps (gapStore, nil without a database)
+	// and retried every gapRetryEvery, at most gapMaxAttempts times.
+	gapStore       GapStore
+	gaps           gapTracker
+	gapRetryEvery  time.Duration
+	gapMaxAttempts int
+
+	// blockSaveEvery is how often an idle subscription's progress is stored.
+	blockSaveEvery time.Duration
 }
 
-// NewManager creates a new subscription manager
+const (
+	// defaultBlockSaveInterval is how often a subscription's progress is stored when it
+	// has no events.
+	defaultBlockSaveInterval = 10 * time.Second
+	// drainIdleTimeout bounds the drain of a stopping monitor that never closes its
+	// channel.
+	drainIdleTimeout = 2 * time.Second
+)
+
+// ManagerOptions configures how the manager reads blocks.
+type ManagerOptions struct {
+	// SharedScanner makes every address monitor read from one shared block scanner:
+	// each block is fetched and parsed once for all watched addresses. False keeps one
+	// polling loop (and one block fetch per block) per watched address.
+	SharedScanner bool
+	// PollInterval is how often the head is polled (default 3 s).
+	PollInterval time.Duration
+	// CatchUpWindow is how far behind the newest watched address (in blocks) another
+	// one may be at startup and still be caught up by the shared scanner
+	// (default monitor.DefaultCatchUpWindow).
+	CatchUpWindow int64
+}
+
+// DefaultManagerOptions returns the defaults: shared scanner, 3 s poll.
+func DefaultManagerOptions() ManagerOptions {
+	return ManagerOptions{
+		SharedScanner: true,
+		PollInterval:  monitor.DefaultScannerPollInterval,
+		CatchUpWindow: monitor.DefaultCatchUpWindow,
+	}
+}
+
+// NewManager creates a new subscription manager with the default options.
 func NewManager(db *storage.Database, tronClient *client.TronClient, log *logger.Logger) *Manager {
+	return NewManagerWithOptions(db, tronClient, log, DefaultManagerOptions())
+}
+
+// NewManagerWithOptions creates a new subscription manager.
+func NewManagerWithOptions(db *storage.Database, tronClient *client.TronClient, log *logger.Logger, opts ManagerOptions) *Manager {
+	var src monitor.BlockSource
+	if tronClient != nil {
+		src = tronClient
+	}
+	m := newManager(db, src, log, opts)
+	m.tronClient = tronClient
+	return m
+}
+
+func newManager(db *storage.Database, src monitor.BlockSource, log *logger.Logger, opts ManagerOptions) *Manager {
 	if log == nil {
 		defaultLog := logger.NewDefault()
 		log = &defaultLog
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = monitor.DefaultScannerPollInterval
+	}
+	if opts.CatchUpWindow <= 0 {
+		opts.CatchUpWindow = monitor.DefaultCatchUpWindow
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Manager{
-		db:          db,
-		tronClient:  tronClient,
-		logger:      log,
-		monitors:    make(map[string]*MonitorWrapper),
-		eventRouter: NewEventRouter(db, log),
-		ctx:         ctx,
-		cancel:      cancel,
+		db:             db,
+		source:         src,
+		opts:           opts,
+		logger:         log,
+		monitors:       make(map[string]*MonitorWrapper),
+		eventRouter:    NewEventRouter(db, log),
+		ctx:            ctx,
+		cancel:         cancel,
+		gapRetryEvery:  DefaultGapRetryInterval,
+		gapMaxAttempts: DefaultGapMaxAttempts,
+		blockSaveEvery: defaultBlockSaveInterval,
+	}
+	if db != nil && db.ScannerGapRepo != nil {
+		m.gapStore = db.ScannerGapRepo
+	}
+	if opts.SharedScanner && src != nil {
+		m.scanner = monitor.NewBlockScanner(src, monitor.ScannerConfig{
+			PollInterval:  opts.PollInterval,
+			CatchUpWindow: opts.CatchUpWindow,
+			OnSkip:        m.recordGap,
+		}, log)
 	}
 
 	return m
+}
+
+// ScannerStats returns the shared block scanner's counters; false when the manager
+// runs one polling loop per address.
+func (m *Manager) ScannerStats() (monitor.ScannerStats, bool) {
+	if m.scanner == nil {
+		return monitor.ScannerStats{}, false
+	}
+	return m.scanner.Stats(), true
 }
 
 // Start starts the subscription manager
@@ -146,6 +235,17 @@ func (m *Manager) Start() error {
 	// Start event router
 	go m.eventRouter.Run(m.ctx)
 
+	// The shared scanner starts after the stored subscriptions subscribed to it, so its
+	// first head read can catch them all up together. Blocks it (or a catch-up) has to
+	// skip are recorded and retried; those a previous run left are loaded first.
+	if m.scanner != nil {
+		m.loadPendingGaps()
+		if err := m.scanner.Start(); err != nil {
+			return fmt.Errorf("failed to start block scanner: %w", err)
+		}
+		go m.gapRetryLoop()
+	}
+
 	return nil
 }
 
@@ -161,6 +261,10 @@ func (m *Manager) Stop() error {
 	// Stop all monitors
 	for _, wrapper := range m.monitors {
 		m.stopMonitorUnsafe(wrapper)
+	}
+
+	if m.scanner != nil {
+		m.scanner.Stop()
 	}
 
 	return nil
@@ -449,6 +553,9 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 			StartBlock:   sub.CurrentBlock,
 		}
 
+		if m.tronClient == nil {
+			return fmt.Errorf("global monitoring needs a TRON client")
+		}
 		globalMonitor, err := monitor.NewGlobalMonitor(
 			m.tronClient,
 			globalCfg,
@@ -462,15 +569,16 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 		eventChan = globalMonitor.Events()
 
 	} else {
-		// Address-specific monitoring
+		// Address-specific monitoring (on the shared scanner when there is one)
 		cfg := monitor.Config{
 			WatchAddress: sub.Address,
-			PollInterval: 3 * time.Second,
+			PollInterval: m.opts.PollInterval,
 			StartBlock:   sub.CurrentBlock,
+			Scanner:      m.scanner,
 		}
 
-		addrMonitor, err := monitor.NewAddressMonitor(
-			m.tronClient,
+		addrMonitor, err := monitor.NewAddressMonitorFromSource(
+			m.source,
 			cfg,
 			m.logger,
 		)
@@ -494,15 +602,22 @@ func (m *Manager) startMonitor(sub *models.Subscription) error {
 	// Store in map
 	m.monitors[sub.SubscriptionID] = wrapper
 
-	// Start monitor goroutine
-	go func() {
+	// Start the monitor. On the shared scanner Start only subscribes (no node read), so
+	// it runs here: the subscriptions loaded at startup are all registered before the
+	// scanner's first head read. A polling monitor reads the node in Start: background.
+	start := func() {
 		if err := monitorInstance.Start(); err != nil {
 			m.logger.Error().
 				Err(err).
 				Str("subscriptionId", sub.SubscriptionID).
 				Msg("Monitor error")
 		}
-	}()
+	}
+	if m.scanner != nil && sub.Address != "" {
+		start()
+	} else {
+		go start()
+	}
 
 	// Start event processor goroutine
 	go m.processEvents(wrapper)
@@ -541,67 +656,146 @@ func (m *Manager) stopMonitorUnsafe(wrapper *MonitorWrapper) {
 // processEvents processes events from a monitor
 func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 	// Ticker to periodically update current block even without events
-	blockUpdateTicker := time.NewTicker(10 * time.Second)
+	blockUpdateTicker := time.NewTicker(m.blockSaveEvery)
 	defer blockUpdateTicker.Stop()
 
 	for {
 		select {
 		case <-wrapper.StopChan:
+			m.drainEvents(wrapper)
 			return
 
 		case <-blockUpdateTicker.C:
-			// Periodically update current block from monitor
-			if wrapper.Monitor != nil {
-				currentBlock := wrapper.Monitor.GetLastBlockNumber()
-				if wrapper.advanceCurrentBlock(currentBlock) {
-					subscriptionID := wrapper.current().SubscriptionID
-					if err := m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, subscriptionID, currentBlock); err != nil {
-						m.logger.Warn().Err(err).Str("subscriptionId", subscriptionID).Msg("Failed to store current block")
-					}
-					m.logger.Debug().
-						Str("subscriptionId", subscriptionID).
-						Int64("currentBlock", currentBlock).
-						Msg("Updated current block")
-				}
+			m.saveProgress(wrapper)
+
+		case event, ok := <-wrapper.EventChan:
+			if !ok {
+				// The monitor stopped and closed its channel
+				return
 			}
-
-		case event := <-wrapper.EventChan:
-			// Take the current snapshot per event so a settings update applies
-			// from the next event on, without restarting the monitor.
-			sub := wrapper.current()
-
-			// Apply filters
-			if !m.matchesFilters(event, sub.Filters) {
-				continue
-			}
-
-			// Route event to clients
-			if err := m.eventRouter.RouteEvent(sub, event); err != nil {
-				m.logger.Error().
-					Err(err).
-					Str("subscriptionId", sub.SubscriptionID).
-					Msg("Failed to route event")
-			}
-
-			// Update subscription stats
-			if err := m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, sub.SubscriptionID); err != nil {
-				m.logger.Warn().Err(err).Str("subscriptionId", sub.SubscriptionID).Msg("Failed to count event")
-			}
-
-			// Update current block
-			if wrapper.advanceCurrentBlock(event.BlockNumber) {
-				if err := m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, sub.SubscriptionID, event.BlockNumber); err != nil {
-					m.logger.Warn().Err(err).Str("subscriptionId", sub.SubscriptionID).Msg("Failed to store current block")
-				}
-			}
-
-			m.logger.Debug().
-				Str("subscriptionId", sub.SubscriptionID).
-				Str("txHash", event.TransactionID).
-				Int64("block", event.BlockNumber).
-				Msg("Event processed")
+			m.handleMonitorEvent(wrapper, event)
 		}
 	}
+}
+
+// saveProgress stores the monitor's progress when every event of the blocks it covers
+// was handled here. A monitor counts an event as handled once it is in its channel,
+// so the progress is read first and stored only when the channel is empty then (this
+// goroutine is the only reader, so an empty channel means each of those events was
+// handled). It reports whether the progress moved.
+func (m *Manager) saveProgress(wrapper *MonitorWrapper) bool {
+	if wrapper.Monitor == nil {
+		return false
+	}
+	currentBlock := wrapper.Monitor.GetLastBlockNumber()
+	if len(wrapper.EventChan) > 0 {
+		return false
+	}
+	if !wrapper.advanceCurrentBlock(currentBlock) {
+		return false
+	}
+	if m.db != nil {
+		subscriptionID := wrapper.current().SubscriptionID
+		if err := m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, subscriptionID, currentBlock); err != nil {
+			m.logger.Warn().Err(err).Str("subscriptionId", subscriptionID).Msg("Failed to store current block")
+		}
+		m.logger.Debug().
+			Str("subscriptionId", subscriptionID).
+			Int64("currentBlock", currentBlock).
+			Msg("Updated current block")
+	}
+	return true
+}
+
+// drainEvents handles the events still in the channel of a stopping monitor until the
+// monitor closes it, so events it already counted as handled are routed, not lost.
+// For a monitor that never closes its channel (one that never started) it gives up
+// after drainIdleTimeout without an event.
+func (m *Manager) drainEvents(wrapper *MonitorWrapper) {
+	idle := time.NewTimer(drainIdleTimeout)
+	defer idle.Stop()
+	for {
+		select {
+		case event, ok := <-wrapper.EventChan:
+			if !ok {
+				return
+			}
+			m.handleMonitorEvent(wrapper, event)
+			if !idle.Stop() {
+				<-idle.C
+			}
+			idle.Reset(drainIdleTimeout)
+		case <-idle.C:
+			return
+		}
+	}
+}
+
+// handleMonitorEvent routes one monitor event and, when it was routed, counts it and
+// moves the subscription's current block.
+func (m *Manager) handleMonitorEvent(wrapper *MonitorWrapper, event *monitor.AddressEvent) {
+	// Take the current snapshot per event so a settings update applies from the next
+	// event on, without restarting the monitor.
+	sub := wrapper.current()
+
+	// Usage event, then filters and routing
+	routed, err := m.routeMonitorEvent(sub, event)
+	if err != nil || !routed {
+		return
+	}
+
+	if m.db == nil {
+		wrapper.advanceCurrentBlock(event.BlockNumber)
+		return
+	}
+
+	// Update subscription stats
+	if err := m.db.SubscriptionRepo.IncrementEventsCount(m.ctx, sub.SubscriptionID); err != nil {
+		m.logger.Warn().Err(err).Str("subscriptionId", sub.SubscriptionID).Msg("Failed to count event")
+	}
+
+	// Update current block
+	if wrapper.advanceCurrentBlock(event.BlockNumber) {
+		if err := m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, sub.SubscriptionID, event.BlockNumber); err != nil {
+			m.logger.Warn().Err(err).Str("subscriptionId", sub.SubscriptionID).Msg("Failed to store current block")
+		}
+	}
+
+	m.logger.Debug().
+		Str("subscriptionId", sub.SubscriptionID).
+		Str("txHash", event.TransactionID).
+		Int64("block", event.BlockNumber).
+		Msg("Event processed")
+}
+
+// routeMonitorEvent hands a monitor event to the router: first the energy_usage event
+// (independent of the transfer filters: a failed call, or a call of any contract,
+// still consumed the owner's resources), then, when the event passes the
+// subscription's filters, the normal routing, which waits for room in the router's
+// queue rather than dropping the event. It reports whether the event was routed
+// (false, nil: filtered out). An error means it passed the filters but was not queued
+// (the manager is stopping): the caller must not count it as handled.
+func (m *Manager) routeMonitorEvent(sub *models.Subscription, event *monitor.AddressEvent) (bool, error) {
+	if sub == nil || event == nil {
+		return false, nil
+	}
+
+	m.eventRouter.RouteUsage(sub, event)
+
+	if !m.matchesFilters(event, sub.Filters) {
+		return false, nil
+	}
+
+	if err := m.eventRouter.RouteEventWait(m.ctx, sub, event); err != nil {
+		m.logger.Error().
+			Err(err).
+			Str("subscriptionId", sub.SubscriptionID).
+			Str("txHash", event.TransactionID).
+			Int64("block", event.BlockNumber).
+			Msg("Failed to route event: not counted as handled")
+		return false, err
+	}
+	return true, nil
 }
 
 // matchesFilters checks if an event matches subscription filters
@@ -665,18 +859,10 @@ func (m *Manager) ScanHistorical(subscriptionID string, fromBlock, toBlock int64
 	// Create a callback that routes events through the normal pipeline
 	callback := func(event *monitor.AddressEvent) {
 		// Apply the subscription's current filters (an update during the scan applies too)
+		// and route the event through the event router (usage event, TRC20 detection and
+		// Porto webhooks)
 		sub := wrapper.current()
-		if !m.matchesFilters(event, sub.Filters) {
-			return
-		}
-
-		// Route event through the event router (this triggers TRC20 detection and Porto webhooks)
-		if err := m.eventRouter.RouteEvent(sub, event); err != nil {
-			m.logger.Error().
-				Err(err).
-				Str("subscriptionId", subscriptionID).
-				Str("txHash", event.TransactionID).
-				Msg("Failed to route historical event")
+		if routed, err := m.routeMonitorEvent(sub, event); err != nil || !routed {
 			return
 		}
 

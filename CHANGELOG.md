@@ -200,6 +200,77 @@ TronTXType="Smart Contract" SCTXType="Unknown Method (0xb9f412b0)"
 
 ## [Unreleased]
 
+### Added
+
+- **Shared block scanner** (`internal/blockchain/monitor/block_scanner.go`): one scanner
+  polls the head (header only when the node supports it), fetches and parses every block
+  once and fans its transactions out to the monitors of all watched addresses. N watched
+  addresses now cost one block fetch per block instead of N (plus N full head reads per
+  poll before). The transaction info of a matched transaction is read once for all the
+  watched addresses in it. Addresses behind the scanner catch up on their own and then
+  join; at startup, addresses within `monitor.catchUpWindow` blocks of each other are
+  caught up together. Config: `monitor.sharedScanner` (default true), `monitor.pollInterval`
+  (default 3s), `monitor.catchUpWindow` (default 1200 blocks).
+- **Porto event `energy_usage`**, posted to `webhooks.porto.usagePath` (default
+  `/v1/webhooks/mongotron/usage`) with the usual HMAC signatures, retries and backoff. Sent
+  for every transaction (successful or failed, with `success` and `result`) whose owner is
+  a watched address of a wallet type in `webhooks.porto.usageWalletTypes` (default
+  `["keep_level"]`, `"*"` for all), with the receipt's `energyUsage`, `energyUsageTotal`,
+  `originEnergyUsage`, `energyPenaltyTotal`, `energyFee`, `netUsage`, `netFee`, `fee` and
+  the subscription's wallet type, user ID, label and metadata. Delivery never blocks block
+  processing (bounded queue, background workers). `webhooks.porto.usageEnabled` (default
+  true) turns it off.
+- **Wallet type `keep_level`** for addresses watched for their resource usage only: they
+  produce `energy_usage` events and no transfer or operation events for Porto.
+- **Guarded watch list writes**: `failIfOtherWalletType: true` on `POST /api/v1/watchlist`
+  (and per entry on `/bulk`) answers 409 `wallet_type_conflict` with the existing row
+  instead of taking over an address watched under another wallet type;
+  `DELETE /api/v1/watchlist/{address}?walletType=T` stops the subscription only when it has
+  that type (409 otherwise). DELETE answers now include `walletType`.
+- Monitor events carry `energyUsageTotal`, `originEnergyUsage`, `energyPenaltyTotal`,
+  `receiptResult` and `fee` in `EventData` (WebSocket clients, stored events).
+- `TronClient.GetHeadBlockNumber` (header-only head read).
+
+- **Skipped blocks are never silent**: every block the scanner (or a catch-up) skips
+  is written to the `scanner_gaps` collection, logged with stable fields and retried
+  every minute (one block read per gap, events routed for the addresses concerned) for
+  up to 60 attempts. `GET /api/v1/health` gains a `monitoring` object with the scanner,
+  `energy_usage` delivery and gap counters.
+- `AddressMonitor.ScanBlock` routes the address's events of an already fetched block.
+
+### Changed
+
+- A watched address now also sees its own transactions of contract types without a
+  dedicated parser (account updates, account creation, contract settings, ...): the owner
+  is read from any contract. The subscription filters still decide what is routed.
+- The API server configures the event router (Porto client, network, usage events)
+  before the subscription manager starts, so events of the startup catch-up reach Porto.
+
+### Fixed
+
+- A block whose fetch failed was skipped at once by the per-address monitors; the shared
+  scanner, and an address catching up on its own, retry it every poll interval and skip
+  it only after 10 failures in a row counted while the node answers the head (then it
+  is recorded and retried as a gap).
+- On the shared scanner an event waits for room in its monitor's channel instead of
+  being dropped, so the stored block of an address never passes an unrouted event.
+- Starting a stopped address monitor is refused; an interrupted catch-up keeps its
+  progress; each monitor gets its own copy of a shared transaction's `EventData`.
+- A skipped-block retry counts as an attempt only while the node answers a head read,
+  so a node outage no longer abandons gaps; retries go to the gaps tried least
+  recently, so unreadable old gaps cannot starve newer ones.
+- The manager waits for room in the router's queue (`RouteEventWait`) instead of
+  dropping an event and moving `currentBlock` past it; an event that cannot be queued
+  because the manager stops is not counted as handled.
+- The periodic save of `currentBlock` skips a round while events wait in the monitor's
+  channel, and a stopping monitor's buffered events are routed before its event loop
+  ends (they were lost at unsubscribe and shutdown).
+- Scanner head reads and block fetches have a deadline (`ScannerConfig.ReadTimeout`,
+  30 s), so a node that accepts connections but never answers cannot hang the scanner
+  or a catch-up.
+- An address monitor could send on its event channel after `Stop` closed it, and the
+  event loop could read a closed channel; both are guarded now.
+
 ### Planned Features
 
 #### High Priority

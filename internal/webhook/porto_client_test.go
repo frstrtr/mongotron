@@ -106,13 +106,13 @@ func TestSetSignatureHeaders(t *testing.T) {
 
 func TestIsPortoWebhookURL(t *testing.T) {
 	cases := map[string]bool{
-		"http://oplex7020:8000/v1/webhooks/mongotron/transfer":      true,
-		"http://192.168.100.3:43069/v1/webhooks/mongotron/transfer": true,
-		"https://api.example.com/v1/webhooks/mongotron/operation":   true,
-		"https://proxy.example.com/porto/v1/webhooks/mongotron/x":   true,
-		"http://localhost:8000/v1/webhooks/mongotron/transfer?x=1":  true,
-		"https://merchant.example.com/hooks/tron":                   false,
-		"https://example.com/v1/webhooks/other/transfer":            false,
+		"http://porto-host:8000/v1/webhooks/mongotron/transfer":    true,
+		"http://203.0.113.10:43069/v1/webhooks/mongotron/transfer": true,
+		"https://api.example.com/v1/webhooks/mongotron/operation":  true,
+		"https://proxy.example.com/porto/v1/webhooks/mongotron/x":  true,
+		"http://localhost:8000/v1/webhooks/mongotron/transfer?x=1": true,
+		"https://merchant.example.com/hooks/tron":                  false,
+		"https://example.com/v1/webhooks/other/transfer":           false,
 		"": false,
 	}
 	for u, want := range cases {
@@ -236,5 +236,78 @@ func TestEmptySecretSendsNoSignature(t *testing.T) {
 		if _, ok := got.headers[http.CanonicalHeaderKey(h)]; ok {
 			t.Errorf("header %s present without a secret", h)
 		}
+	}
+}
+
+func TestSendUsageNotificationIsSignedToTheUsagePath(t *testing.T) {
+	rec, srv := newRecorder(http.StatusOK)
+	defer srv.Close()
+
+	c := NewPortoAPIClient(srv.URL, "", vecSecret, "tron-nile", testLogger())
+	if c.UsageURL() != srv.URL+DefaultUsagePath {
+		t.Fatalf("UsageURL = %s", c.UsageURL())
+	}
+	event := &UsageEvent{
+		EventType: EventTypeEnergyUsage, EventID: "usage_ab_sub_9", TxHash: "ab", SubscriptionID: "sub_9",
+		OwnerAddress: "TRRPU387srsJJKiv8DfEsPnLBiWBcRMfCu", EnergyUsage: 64285, Result: "SUCCESS", Success: true, ReceiptKnown: true,
+		Metadata: map[string]interface{}{"keep_level_order_id": 42},
+	}
+	if err := c.SendUsageNotification(context.Background(), event); err != nil {
+		t.Fatalf("SendUsageNotification: %v", err)
+	}
+	got := rec.last(t)
+	if got.path != DefaultUsagePath {
+		t.Errorf("path = %s, want %s", got.path, DefaultUsagePath)
+	}
+	if got.headers.Get(HeaderSignature) != hmacHex(vecSecret, got.body) {
+		t.Error("v1 signature does not match the body")
+	}
+	ts := got.headers.Get(HeaderTimestamp)
+	if got.headers.Get(HeaderSignatureV2) != hmacHex(vecSecret, []byte(ts), []byte("."), got.body) {
+		t.Error("v2 signature does not match timestamp + body")
+	}
+	if got.headers.Get("X-MongoTron-Event") != EventTypeEnergyUsage || got.headers.Get("X-Subscription-ID") != "sub_9" {
+		t.Errorf("unexpected headers: %v", got.headers)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(got.body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["energyUsage"] != float64(64285) || decoded["metadata"].(map[string]interface{})["keep_level_order_id"] != float64(42) {
+		t.Errorf("unexpected payload: %s", got.body)
+	}
+	for _, key := range []string{"energyUsageTotal", "energyFee", "netUsage", "netFee", "result", "success", "receiptKnown", "blockNumber", "blockTimestamp"} {
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("payload misses %q: %s", key, got.body)
+		}
+	}
+
+	c.SetUsagePath("custom/usage")
+	if err := c.SendUsageNotification(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.last(t); got.path != "/custom/usage" {
+		t.Fatalf("path = %s, want /custom/usage", got.path)
+	}
+	c.SetUsagePath("  ")
+	if c.UsageURL() != srv.URL+"/custom/usage" {
+		t.Fatalf("an empty path must keep the current one, got %s", c.UsageURL())
+	}
+}
+
+func TestUsageDeliveryRetriesLikeTheOtherEvents(t *testing.T) {
+	rec, srv := newRecorder(http.StatusBadGateway)
+	defer srv.Close()
+
+	c := NewPortoAPIClient(srv.URL, "", vecSecret, "tron-nile", testLogger())
+	c.retryDelay = time.Millisecond
+	if err := c.SendUsageNotification(context.Background(), &UsageEvent{TxHash: "aa"}); err == nil {
+		t.Fatal("expected an error after exhausting retries")
+	}
+	if hits := atomic.LoadInt32(&rec.hits); hits != maxDeliveryAttempts {
+		t.Fatalf("attempts = %d, want %d", hits, maxDeliveryAttempts)
+	}
+	if !IsPortoWebhookURL(c.UsageURL()) {
+		t.Fatal("the usage path must be recognised as a Porto endpoint")
 	}
 }

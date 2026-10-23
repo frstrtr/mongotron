@@ -13,8 +13,10 @@ import (
 	"github.com/fbsobreira/gotron-sdk/pkg/proto/core"
 	"github.com/frstrtr/mongotron/pkg/logger"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // TronClient handles connection to Tron blockchain node
@@ -136,6 +138,30 @@ func (c *TronClient) GetNowBlock(ctx context.Context) (*core.Block, error) {
 	}
 
 	return block, nil
+}
+
+// ErrHeaderOnlyUnsupported is returned by GetHeadBlockNumber when the node does not
+// implement the header-only block query (wallet/getblock, java-tron 4.5.1 and later).
+var ErrHeaderOnlyUnsupported = errors.New("header-only block query not supported by the node")
+
+// GetHeadBlockNumber returns the number of the latest block without downloading its
+// transactions (GetBlock with detail=false: the node answers with the header only). A
+// mainnet head block with its transactions is hundreds of KB, the header is a few
+// hundred bytes, so a poll that finds no new block costs almost nothing.
+// It returns ErrHeaderOnlyUnsupported (wrapped) when the node does not implement it;
+// callers then read the head with GetNowBlock.
+func (c *TronClient) GetHeadBlockNumber(ctx context.Context) (int64, error) {
+	blockExt, err := c.walletClient.GetBlock(ctx, &api.BlockReq{IdOrNum: "", Detail: false})
+	if err != nil {
+		if status.Code(err) == codes.Unimplemented {
+			return 0, fmt.Errorf("%w: %v", ErrHeaderOnlyUnsupported, err)
+		}
+		return 0, fmt.Errorf("failed to get head block header: %w", err)
+	}
+	if blockExt == nil || blockExt.GetBlockHeader() == nil || blockExt.GetBlockHeader().GetRawData() == nil {
+		return 0, fmt.Errorf("received nil block header")
+	}
+	return blockExt.GetBlockHeader().GetRawData().GetNumber(), nil
 }
 
 // GetBlockByNum retrieves a specific block by number

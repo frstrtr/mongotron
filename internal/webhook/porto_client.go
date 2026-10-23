@@ -24,6 +24,7 @@ type PortoAPIClient struct {
 	baseURL       string
 	webhookPath   string
 	operationPath string
+	usagePath     string
 	webhookSecret string
 	network       string
 	httpClient    *http.Client
@@ -122,6 +123,68 @@ type OperationEvent struct {
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
+// EventTypeEnergyUsage is the eventType of UsageEvent.
+const EventTypeEnergyUsage = "energy_usage"
+
+// UsageEvent reports the resources one transaction of a watched address consumed
+// (eventType "energy_usage"). It is sent for every transaction whose owner (the
+// account that signs and pays) is the watched address, successful or failed: a
+// reverted or out-of-energy contract call consumes energy too. Success and Result say
+// how it ended. It goes to the usage path (default /v1/webhooks/mongotron/usage),
+// signed like every Porto event.
+//
+// The receipt figures come from the node's transaction info. When that could not be
+// read, ReceiptKnown is false, Result is "UNKNOWN" and the figures are 0: the event
+// then only says "this address sent a transaction".
+type UsageEvent struct {
+	EventType string `json:"eventType"` // "energy_usage"
+	// EventID is stable for one transaction and one subscription
+	// ("usage_<txHash>_<subscriptionId>"), so a redelivery can be recognised.
+	EventID   string `json:"eventId"`
+	Timestamp int64  `json:"timestamp"` // Unix time (seconds) the event was built
+	Network   string `json:"network"`   // "tron-mainnet" or "tron-nile"
+
+	// Transaction details
+	TxHash         string `json:"txHash"`
+	BlockNumber    int64  `json:"blockNumber"`
+	BlockTimestamp int64  `json:"blockTimestamp"` // block time, Unix milliseconds
+	Success        bool   `json:"success"`        // proven successful by the transaction info
+	// Result is the contract result of the receipt ("SUCCESS", "REVERT",
+	// "OUT_OF_ENERGY", "OUT_OF_TIME", ...) for contract calls; "SUCCESS" or "FAILED"
+	// for other transaction types; "UNKNOWN" without transaction info.
+	Result        string `json:"result"`
+	ResultMessage string `json:"resultMessage,omitempty"` // the node's resMessage, when any
+	ReceiptKnown  bool   `json:"receiptKnown"`
+
+	// What the transaction did
+	OwnerAddress    string `json:"ownerAddress"`              // the sender (base58), always the watched address
+	ContractType    string `json:"contractType"`              // e.g. "TriggerSmartContract", "TransferContract"
+	ContractAddress string `json:"contractAddress,omitempty"` // called (or created) contract, base58
+	MethodSignature string `json:"methodSignature,omitempty"` // 4-byte selector, hex, for contract calls
+	MethodName      string `json:"methodName,omitempty"`      // decoded method name, when known
+
+	// Receipt (energy in energy units, fees in SUN)
+	EnergyUsage        int64 `json:"energyUsage"`        // energy taken from the owner's own available energy (staked or delegated to it)
+	EnergyUsageTotal   int64 `json:"energyUsageTotal"`   // all energy the execution used (own + contract origin + burned)
+	OriginEnergyUsage  int64 `json:"originEnergyUsage"`  // energy paid by the contract's deployer
+	EnergyPenaltyTotal int64 `json:"energyPenaltyTotal"` // extra energy of the dynamic energy model, included in the total
+	EnergyFee          int64 `json:"energyFee"`          // SUN burned for energy the owner did not have
+	NetUsage           int64 `json:"netUsage"`           // bandwidth taken from the owner's bandwidth (staked or free)
+	NetFee             int64 `json:"netFee"`             // SUN burned for bandwidth
+	Fee                int64 `json:"fee"`                // total SUN the transaction cost the owner
+
+	// Wallet classification (from subscription registration)
+	Direction      string `json:"direction"` // always "outgoing": the watched address is the sender
+	WalletType     string `json:"walletType"`
+	WatchedAddress string `json:"watchedAddress"`
+	SubscriptionID string `json:"subscriptionId"`
+	UserID         string `json:"userId,omitempty"`
+	Label          string `json:"label,omitempty"`
+
+	// Additional metadata from subscription (e.g. {"keep_level_order_id": 42})
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
 // VoteEntry represents a single vote for an SR
 type VoteEntry struct {
 	SRAddress string `json:"srAddress"`
@@ -154,6 +217,8 @@ const (
 	DefaultTransferPath = "/v1/webhooks/mongotron/transfer"
 	// DefaultOperationPath is the Porto API endpoint for gas station operation events.
 	DefaultOperationPath = "/v1/webhooks/mongotron/operation"
+	// DefaultUsagePath is the Porto API endpoint for energy_usage events.
+	DefaultUsagePath = "/v1/webhooks/mongotron/usage"
 	// PortoWebhookPathPrefix identifies Porto API webhook endpoints. These only accept
 	// Porto-shaped, signed payloads (TransferEvent/OperationEvent) delivered by this client.
 	PortoWebhookPathPrefix = "/v1/webhooks/mongotron/"
@@ -236,6 +301,7 @@ func NewPortoAPIClient(baseURL, webhookPath, webhookSecret, network string, log 
 		baseURL:       strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		webhookPath:   ensureLeadingSlash(webhookPath),
 		operationPath: DefaultOperationPath,
+		usagePath:     DefaultUsagePath,
 		webhookSecret: webhookSecret,
 		network:       network,
 		httpClient: &http.Client{
@@ -254,11 +320,22 @@ func (c *PortoAPIClient) SetOperationPath(p string) {
 	}
 }
 
+// SetUsagePath overrides the path energy_usage events are posted to
+// (default /v1/webhooks/mongotron/usage). An empty path keeps the default.
+func (c *PortoAPIClient) SetUsagePath(p string) {
+	if strings.TrimSpace(p) != "" {
+		c.usagePath = ensureLeadingSlash(strings.TrimSpace(p))
+	}
+}
+
 // TransferURL returns the full URL transfer events are posted to.
 func (c *PortoAPIClient) TransferURL() string { return c.baseURL + c.webhookPath }
 
 // OperationURL returns the full URL operation events are posted to.
 func (c *PortoAPIClient) OperationURL() string { return c.baseURL + c.operationPath }
+
+// UsageURL returns the full URL energy_usage events are posted to.
+func (c *PortoAPIClient) UsageURL() string { return c.baseURL + c.usagePath }
 
 func ensureLeadingSlash(p string) string {
 	if p != "" && !strings.HasPrefix(p, "/") {
@@ -385,6 +462,40 @@ func (c *PortoAPIClient) SendOperationNotification(ctx context.Context, event *O
 		Str("operation", event.OperationType).
 		Str("owner", event.OwnerAddress).
 		Msg("Operation notification sent to Porto API")
+	return nil
+}
+
+// SendUsageNotification sends an energy_usage event to Porto API, with the same
+// signing, retries and backoff as the other events.
+func (c *PortoAPIClient) SendUsageNotification(ctx context.Context, event *UsageEvent) error {
+	if c.baseURL == "" {
+		c.logger.Warn().Msg("Porto API URL not configured, skipping usage webhook")
+		return nil
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal usage event: %w", err)
+	}
+
+	eventHeader := event.EventType
+	if eventHeader == "" {
+		eventHeader = EventTypeEnergyUsage
+	}
+	if err := c.deliver(ctx, c.UsageURL(), payload, map[string]string{
+		"X-MongoTron-Event": eventHeader,
+		"X-Subscription-ID": event.SubscriptionID,
+	}); err != nil {
+		return fmt.Errorf("usage event for %s: %w", event.TxHash, err)
+	}
+
+	c.logger.Debug().
+		Str("eventId", event.EventID).
+		Str("txHash", event.TxHash).
+		Str("owner", event.OwnerAddress).
+		Int64("energyUsage", event.EnergyUsage).
+		Int64("netUsage", event.NetUsage).
+		Msg("Usage notification sent to Porto API")
 	return nil
 }
 

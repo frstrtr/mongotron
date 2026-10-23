@@ -866,6 +866,238 @@ func main() {
 
 ---
 
+## Porto API Integration
+
+The API server (`cmd/api-server`) watches the addresses of its watch list and posts
+signed, Porto-shaped events to a Porto API. This section describes what is implemented
+today; the sections above also describe planned features.
+
+### Shared block scanner
+
+All watched addresses read the chain through one shared block scanner
+(`internal/blockchain/monitor/block_scanner.go`): it polls the head (header only, a few
+hundred bytes, with a fallback to the full head block on nodes without that query),
+fetches and parses every new block once, and fans each transaction out to the monitors
+of the addresses it involves. N watched addresses cost one block fetch per block, not N.
+The transaction info of a matched transaction is read once, even when several watched
+addresses are in it. Each monitor keeps its own event channel, filters and progress
+(`currentBlock` never passes a match that is still being handled).
+
+At startup, watched addresses whose stored block is at most `monitor.catchUpWindow`
+blocks behind the newest one are caught up together by the scanner; an address further
+behind (or one added later with an older `startBlock`) catches up on its own first and
+then joins the scanner.
+
+A block that cannot be fetched is retried one poll interval later, by the scanner and by
+a catch-up alike. A failure counts only while the node answers the head, so a node that
+is down never makes a block be skipped. After 10 counted failures in a row the block is
+skipped and recorded as a gap (next section).
+
+On the shared scanner an event waits for room in its monitor's channel instead of being
+dropped, and the manager waits for room in the router's queue instead of dropping: the
+stored `currentBlock` of an address never passes an event that was not handed to the
+router. Only that address waits; the scanner and the other addresses go on. The
+periodic save of `currentBlock` skips a round while events still wait in the channel,
+and a monitor that stops (unsubscribe, shutdown) routes the events already in its
+channel before it ends. Every head read and block fetch has a 30 s deadline.
+
+`monitor.sharedScanner: false` restores one polling loop per watched address. That mode
+keeps its old behaviour: a block whose fetch fails is skipped (logged) and no gap is
+recorded or retried.
+
+### Skipped blocks and monitoring
+
+Every skipped block is written to the `scanner_gaps` collection (block, address for a
+catch-up gap or empty for the scanner, error, time, retry attempts, last error, retried
+or abandoned time) and logged as a Warn with stable fields: `event=block_skipped`
+(scanner) and `event=scanner_gap_recorded` (manager), with `block`, `address`, `error`.
+The manager retries pending gaps every minute, 10 per round, those tried least recently
+first (so gaps that keep failing never starve the others): one block read per gap, then
+the block's events are routed through the normal pipeline for every watched address (or
+the one address of a catch-up gap). A retry counts as an attempt only while the node
+answers a head read, so an outage never brings a gap closer to being abandoned. After
+60 counted failed retries a gap is abandoned with an Error log
+(`event=scanner_gap_abandoned`). Gaps a previous run left are loaded at start.
+
+`GET /api/v1/health` carries the counters to alert on:
+
+```json
+"monitoring": {
+  "sharedScanner": true,
+  "scanner": {"headReads": 1201, "headerOnlyReads": 1201, "fullHeadReads": 0, "blockFetches": 1200,
+              "blocksScanned": 1200, "catchUpFetches": 0, "skippedBlocks": 0, "matches": 37,
+              "txEvents": 35, "subscribers": 12, "cursor": 68900000, "head": 68900000},
+  "usage": {"queued": 9, "sent": 9, "failed": 0, "dropped": 0},
+  "gaps": {"recorded": 0, "pending": 0, "recovered": 0, "abandoned": 0, "persistFailures": 0}
+}
+```
+
+Alert on `scanner.skippedBlocks` or `gaps.pending` above 0 for long, `gaps.abandoned`
+above 0, `gaps.persistFailures` above 0 (a skipped block that is not in `scanner_gaps`
+is retried only until the next restart), `usage.dropped` or `usage.failed` growing, and
+`scanner.head - scanner.cursor` growing.
+
+Measured in `TestBlockFetchesBeforeAndAfterSharedScanner` (20 blocks):
+
+| Watched addresses | Per-address polling (full block downloads) | Shared scanner (full block downloads) |
+|---|---|---|
+| 1 | 40 (20 GetBlockByNum + 20 GetNowBlock) | 20 GetBlockByNum (+21 header-only head reads) |
+| 10 | 400 | 20 |
+| 100 | 4000 | 20 |
+
+### Watch list API
+
+```bash
+# Register (upsert by address). failIfOtherWalletType: never take over an address that
+# is already watched under another wallet type (409 wallet_type_conflict instead).
+curl -X POST http://mongotron.example.com:8080/api/v1/watchlist \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "address": "TXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "walletType": "keep_level",
+        "userId": "keep-level:42",
+        "label": "keep-level order 42",
+        "failIfOtherWalletType": true,
+        "metadata": {"keep_level_order_id": 42}
+      }'
+# 201: created; 200: the active subscription of the same type was updated in place;
+# 409: {"error": "wallet_type_conflict", "message": "...", "existing": {...row...}}
+
+# Read: the row shows walletType, userId, label, metadata, filters, status
+curl http://mongotron.example.com:8080/api/v1/watchlist/TXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+curl 'http://mongotron.example.com:8080/api/v1/watchlist?walletType=keep_level'
+
+# Unregister. ?walletType= guards the removal: another type's subscription is never
+# stopped (409 wallet_type_conflict). Idempotent: an address already stopped answers 200.
+curl -X DELETE 'http://mongotron.example.com:8080/api/v1/watchlist/TXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx?walletType=keep_level'
+```
+
+Wallet types: `platform`, `nps`, `portal`, `exchange`, `gasstation`, `invoice`, `general`
+(the default) and `keep_level`. A `keep_level` address is watched for its resource usage
+only: it produces `energy_usage` events and no transfer or operation events for Porto, so
+watching it can never credit anything.
+
+### Porto webhook events
+
+| Event (`eventType`) | Sent for | Path (config key, default) |
+|---|---|---|
+| `trx_transfer`, `trc10_transfer`, `trc20_transfer` (USDT `transfer`/`transferFrom`) | transfers to or from a watched address (watch list entries pass successful transactions only) | `webhooks.porto.webhookPath`, `/v1/webhooks/mongotron/transfer` |
+| `freeze_balance`, `unfreeze_balance`, `withdraw_unstake`, `delegate_resource`, `undelegate_resource`, `vote_witness`, `permission_update`, `claim_rewards` | gas station operations of a watched address | `webhooks.porto.operationPath`, `/v1/webhooks/mongotron/operation` |
+| `energy_usage` | every transaction SENT by a watched address of a wallet type in `webhooks.porto.usageWalletTypes`, successful or failed | `webhooks.porto.usagePath`, `/v1/webhooks/mongotron/usage` |
+
+Every event is a JSON POST signed with the shared secret (`webhooks.porto.webhookSecret`):
+`X-MongoTron-Signature` = hex HMAC-SHA256(secret, body), `X-MongoTron-Signature-V2` =
+hex HMAC-SHA256(secret, timestamp + "." + body), `X-MongoTron-Timestamp` = Unix seconds of
+the attempt. `X-MongoTron-Event` carries the event type and `X-Subscription-ID` the
+subscription. Delivery makes up to 3 attempts with a growing pause (1 s, then 2 s) and
+does not retry a 4xx answer other than 408 and 429.
+
+#### `energy_usage`
+
+Sent for every transaction whose owner (the account that signs and pays) is the watched
+address: any contract call (approve, swap, transfer, a reverted or out-of-energy call:
+those consume energy too), a TRX or TRC10 transfer (bandwidth), a delegation, and any
+other contract type. It is not sent when the receipt shows nothing was consumed, nor for
+transactions where the watched address is only the receiver. The transfer filters of the
+subscription (`assetTypes`, success only) do not apply to it.
+
+Delivery runs on background workers fed by a bounded queue: block processing never waits
+for it, and a full queue drops the event (counted in `usage.dropped` and logged). Treat
+the event as a hint ("this address just used resources"), not as an exact ledger.
+
+```json
+{
+  "eventType": "energy_usage",
+  "eventId": "usage_3b1f4f0c2a9e8d7c6b5a49382716051f0e1d2c3b4a5968778695a4b3c2d1e0f9_sub_keep42",
+  "timestamp": 1792756422,
+  "network": "tron-nile",
+  "txHash": "3b1f4f0c2a9e8d7c6b5a49382716051f0e1d2c3b4a5968778695a4b3c2d1e0f9",
+  "blockNumber": 68900002,
+  "blockTimestamp": 1758682969000,
+  "success": true,
+  "result": "SUCCESS",
+  "receiptKnown": true,
+  "ownerAddress": "TRRPU387srsJJKiv8DfEsPnLBiWBcRMfCu",
+  "contractType": "TriggerSmartContract",
+  "contractAddress": "TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf",
+  "methodSignature": "095ea7b3",
+  "methodName": "approve",
+  "energyUsage": 99604,
+  "energyUsageTotal": 99604,
+  "originEnergyUsage": 0,
+  "energyPenaltyTotal": 0,
+  "energyFee": 0,
+  "netUsage": 313,
+  "netFee": 0,
+  "fee": 0,
+  "direction": "outgoing",
+  "walletType": "keep_level",
+  "watchedAddress": "TRRPU387srsJJKiv8DfEsPnLBiWBcRMfCu",
+  "subscriptionId": "sub_keep42",
+  "userId": "keep-level:42",
+  "label": "keep-level order 42",
+  "metadata": {"keep_level_order_id": 42}
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `eventId` | `usage_<txHash>_<subscriptionId>`: the same for a redelivery of the same transaction |
+| `blockTimestamp` | block time, Unix milliseconds |
+| `success` | true only when the transaction info proves a successful execution |
+| `result` | receipt result of a contract call (`SUCCESS`, `REVERT`, `OUT_OF_ENERGY`, `OUT_OF_TIME`, ...); `SUCCESS` or `FAILED` for other types; `UNKNOWN` when the transaction info could not be read |
+| `resultMessage` | the node's result message, when there is one (omitted otherwise) |
+| `receiptKnown` | false when the transaction info could not be read: the figures are then 0 |
+| `ownerAddress` | the sender, always the watched address |
+| `contractAddress`, `methodSignature`, `methodName` | the called (or created) contract, the 4-byte selector, the decoded method name when known (omitted when empty) |
+| `energyUsage` | energy taken from the owner's own available energy (its stake plus energy delegated to it): the drop a keep-level rental refills |
+| `energyUsageTotal` | all energy the execution used: own, contract origin and burned |
+| `originEnergyUsage` | energy paid by the contract deployer |
+| `energyPenaltyTotal` | extra energy of the dynamic energy model, part of the total |
+| `energyFee`, `netFee`, `fee` | SUN burned for energy, for bandwidth, and the transaction's total fee |
+| `netUsage` | bandwidth taken from the owner's staked or free bandwidth |
+| `walletType`, `userId`, `label`, `metadata`, `subscriptionId`, `watchedAddress` | from the watch list registration |
+
+### Rules for the Porto side
+
+- Register a `keep_level` address with `"failIfOtherWalletType": true` and remove it
+  with `DELETE /api/v1/watchlist/{address}?walletType=keep_level`, always. Without them
+  an upsert takes over, and a removal stops, an address watched under another type (an
+  invoice or a platform address).
+- The usage route (`/v1/webhooks/mongotron/usage`) must exist on Porto before any
+  `keep_level` address is registered: a 404 is a 4xx answer and is not retried, so
+  those events are lost.
+- `energy_usage` events are hints only (a full queue drops them; a node read stays the
+  source of truth). Transfer crediting keeps deduplicating on `txHash`: a retried gap or
+  a catch-up can deliver a transfer event again.
+
+### Configuration
+
+```yaml
+monitor:
+  sharedScanner: true        # false = one polling loop per watched address
+  pollInterval: 3s           # head poll interval
+  catchUpWindow: 1200        # blocks; see "Shared block scanner"
+
+webhooks:
+  porto:
+    enabled: true
+    baseUrl: "${PORTO_API_URL}"                 # e.g. https://porto.example.com
+    webhookSecret: "${MONGOTRON_WEBHOOK_SECRET}" # never commit it
+    network: "tron-nile"                         # or tron-mainnet
+    webhookPath: "/v1/webhooks/mongotron/transfer"
+    operationPath: "/v1/webhooks/mongotron/operation"
+    usageEnabled: true                           # energy_usage events on or off
+    usagePath: "/v1/webhooks/mongotron/usage"
+    usageWalletTypes: ["keep_level"]             # "*" = every wallet type
+```
+
+Every key can be set from the environment as `MONGOTRON_<SECTION>_<KEY>` in upper case,
+e.g. `MONGOTRON_MONITOR_SHAREDSCANNER=false` or
+`MONGOTRON_WEBHOOKS_PORTO_USAGEWALLETTYPES=keep_level,general`.
+
+---
+
 ## Deployment Artifacts
 
 ### Production Docker Compose (docker-compose.prod.yml)

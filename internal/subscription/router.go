@@ -34,6 +34,8 @@ type EventRouter struct {
 	tronParser         *parser.TronParser
 	network            string // "tron-mainnet" or "tron-nile"
 	mu                 sync.RWMutex
+	// usage holds the energy_usage settings and delivery queue (see usage.go).
+	usage usageRouting
 }
 
 // RouteEventRequest contains event routing information
@@ -66,9 +68,26 @@ func NewEventRouter(db *storage.Database, log *logger.Logger) *EventRouter {
 	}
 }
 
-// SetPortoClient sets the Porto API client for webhook notifications
+// SetPortoClient sets the Porto API client for webhook notifications. Configure the
+// router before the manager starts its monitors.
 func (r *EventRouter) SetPortoClient(client *webhook.PortoAPIClient) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.portoClient = client
+}
+
+// porto returns the Porto API client, nil when none is configured.
+func (r *EventRouter) porto() *webhook.PortoAPIClient {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.portoClient
+}
+
+// networkName returns the configured network name.
+func (r *EventRouter) networkName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.network
 }
 
 // SetSubscriptionSecret sets the HMAC secret used to sign per-subscription webhook posts.
@@ -78,6 +97,8 @@ func (r *EventRouter) SetSubscriptionSecret(secret string) {
 
 // SetNetwork sets the network name (tron-mainnet or tron-nile)
 func (r *EventRouter) SetNetwork(network string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.network = network
 }
 
@@ -112,6 +133,34 @@ func (r *EventRouter) RouteEvent(sub *models.Subscription, event *monitor.Addres
 	}
 }
 
+// RouteEventWait queues an event for routing like RouteEvent, but waits for room in
+// the queue (until ctx ends) instead of dropping the event: an event its caller counts
+// as handled is always queued. It returns an error only when ctx ended first.
+func (r *EventRouter) RouteEventWait(ctx context.Context, sub *models.Subscription, event *monitor.AddressEvent) error {
+	req := &RouteEventRequest{
+		Subscription: sub,
+		Event:        event,
+	}
+
+	select {
+	case r.eventQueue <- req:
+		return nil
+	default:
+	}
+
+	r.logger.Warn().
+		Str("subscriptionId", sub.SubscriptionID).
+		Str("txHash", event.TransactionID).
+		Int64("block", event.BlockNumber).
+		Msg("Event queue full: waiting for room")
+	select {
+	case r.eventQueue <- req:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("event queue full and %w", ctx.Err())
+	}
+}
+
 // routeEvent routes an event to all registered destinations
 func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 	// Convert event to JSON
@@ -140,8 +189,9 @@ func (r *EventRouter) routeEvent(req *RouteEventRequest) {
 			Msg("Skipping per-subscription webhook: Porto API endpoint is served by the signed Porto client")
 	}
 
-	// Route to Porto API based on contract type
-	if r.portoClient != nil {
+	// Route to Porto API based on contract type. Usage-only wallet types (keep_level)
+	// get energy_usage events only (see RouteUsage), never transfer or operation events.
+	if r.porto() != nil && sendsPortoTransferEvents(req.Subscription) {
 		switch req.Event.ContractType {
 		case "TransferContract":
 			// Native TRX transfer
@@ -1234,6 +1284,9 @@ func (r *EventRouter) sendToWebhook(sub *models.Subscription, eventData []byte) 
 
 // storeEvent stores event in database
 func (r *EventRouter) storeEvent(req *RouteEventRequest) {
+	if r.db == nil || r.db.EventRepo == nil {
+		return
+	}
 	event := &models.Event{
 		EventID:        fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
 		Network:        "tron-nile", // TODO: Make configurable

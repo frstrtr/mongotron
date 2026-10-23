@@ -21,6 +21,7 @@ type Database struct {
 	TransactionRepo      *repositories.TransactionRepository
 	EventRepo            *repositories.EventRepository
 	SubscriptionRepo     *repositories.SubscriptionRepository
+	ScannerGapRepo       *repositories.ScannerGapRepository
 }
 
 // Config holds database configuration
@@ -80,6 +81,7 @@ func NewDatabase(cfg Config, log *logger.Logger) (*Database, error) {
 		TransactionRepo:  repositories.NewTransactionRepository(db),
 		EventRepo:        repositories.NewEventRepository(db),
 		SubscriptionRepo: repositories.NewSubscriptionRepository(db, log),
+		ScannerGapRepo:   repositories.NewScannerGapRepository(db),
 	}
 
 	return database, nil
@@ -103,6 +105,10 @@ func (d *Database) InitializeIndexes(ctx context.Context) error {
 
 	if err := d.SubscriptionRepo.CreateIndexes(ctx); err != nil {
 		return fmt.Errorf("failed to create subscription indexes: %w", err)
+	}
+
+	if err := d.ScannerGapRepo.CreateIndexes(ctx); err != nil {
+		return fmt.Errorf("failed to create scanner gap indexes: %w", err)
 	}
 
 	d.logger.Info().Msg("Database indexes created successfully")

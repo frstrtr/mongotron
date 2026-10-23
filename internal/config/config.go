@@ -15,6 +15,7 @@ type Config struct {
 	Server     ServerConfig
 	Database   DatabaseConfig
 	Blockchain BlockchainConfig
+	Monitor    MonitorConfig
 	WorkerPool WorkerPoolConfig
 	Logging    LoggingConfig
 	Metrics    MetricsConfig
@@ -77,6 +78,20 @@ type TronConfig struct {
 	}
 }
 
+// MonitorConfig controls how watched addresses read blocks.
+type MonitorConfig struct {
+	// SharedScanner (default true): one scanner fetches and parses each block once and
+	// fans it out to every watched address. False: one polling loop per watched address
+	// (one block fetch per block per address, the behaviour before the scanner).
+	SharedScanner bool `yaml:"sharedScanner"`
+	// PollInterval is how often the head is polled (default 3s).
+	PollInterval time.Duration `yaml:"pollInterval"`
+	// CatchUpWindow (blocks, default 1200): at startup, watched addresses at most this far
+	// behind the newest one are caught up together by the scanner; one further behind
+	// catches up on its own first.
+	CatchUpWindow int64 `yaml:"catchUpWindow"`
+}
+
 type WorkerPoolConfig struct {
 	Workers                 int
 	QueueSize               int
@@ -120,6 +135,16 @@ type PortoConfig struct {
 	OperationPath string `yaml:"operationPath"` // Path for operation events (default /v1/webhooks/mongotron/operation)
 	WebhookSecret string `yaml:"webhookSecret"`
 	Network       string `yaml:"network"` // "tron-mainnet" or "tron-nile"
+
+	// UsageEnabled (default true) turns energy_usage events on for the wallet types in
+	// UsageWalletTypes.
+	UsageEnabled bool `yaml:"usageEnabled"`
+	// UsagePath is the path energy_usage events are posted to
+	// (default /v1/webhooks/mongotron/usage).
+	UsagePath string `yaml:"usagePath"`
+	// UsageWalletTypes lists the wallet types whose watched addresses produce
+	// energy_usage events (default ["keep_level"]; "*" = every wallet type).
+	UsageWalletTypes []string `yaml:"usageWalletTypes"`
 }
 
 type APIConfig struct {
@@ -252,6 +277,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.read_timeout", "30s")
 	v.SetDefault("server.write_timeout", "30s")
 	v.SetDefault("server.idle_timeout", "120s")
+
+	// Monitor defaults: one shared block scanner for all watched addresses
+	v.SetDefault("monitor.sharedScanner", true)
+	v.SetDefault("monitor.pollInterval", "3s")
+	v.SetDefault("monitor.catchUpWindow", 1200)
+
+	// Porto energy_usage events (sent only for the listed wallet types)
+	v.SetDefault("webhooks.porto.usageEnabled", true)
+	v.SetDefault("webhooks.porto.usagePath", "/v1/webhooks/mongotron/usage")
+	v.SetDefault("webhooks.porto.usageWalletTypes", []string{"keep_level"})
 
 	// Database defaults
 	v.SetDefault("database.mongodb.uri", "mongodb://localhost:27017")
