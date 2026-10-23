@@ -99,6 +99,13 @@ type Manager struct {
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
+
+	// Skipped blocks: persisted in scanner_gaps (gapStore, nil without a database)
+	// and retried every gapRetryEvery, at most gapMaxAttempts times.
+	gapStore       GapStore
+	gaps           gapTracker
+	gapRetryEvery  time.Duration
+	gapMaxAttempts int
 }
 
 // ManagerOptions configures how the manager reads blocks.
@@ -155,19 +162,25 @@ func newManager(db *storage.Database, src monitor.BlockSource, log *logger.Logge
 	ctx, cancel := context.WithCancel(context.Background())
 
 	m := &Manager{
-		db:          db,
-		source:      src,
-		opts:        opts,
-		logger:      log,
-		monitors:    make(map[string]*MonitorWrapper),
-		eventRouter: NewEventRouter(db, log),
-		ctx:         ctx,
-		cancel:      cancel,
+		db:             db,
+		source:         src,
+		opts:           opts,
+		logger:         log,
+		monitors:       make(map[string]*MonitorWrapper),
+		eventRouter:    NewEventRouter(db, log),
+		ctx:            ctx,
+		cancel:         cancel,
+		gapRetryEvery:  DefaultGapRetryInterval,
+		gapMaxAttempts: DefaultGapMaxAttempts,
+	}
+	if db != nil && db.ScannerGapRepo != nil {
+		m.gapStore = db.ScannerGapRepo
 	}
 	if opts.SharedScanner && src != nil {
 		m.scanner = monitor.NewBlockScanner(src, monitor.ScannerConfig{
 			PollInterval:  opts.PollInterval,
 			CatchUpWindow: opts.CatchUpWindow,
+			OnSkip:        m.recordGap,
 		}, log)
 	}
 
@@ -210,11 +223,14 @@ func (m *Manager) Start() error {
 	go m.eventRouter.Run(m.ctx)
 
 	// The shared scanner starts after the stored subscriptions subscribed to it, so its
-	// first head read can catch them all up together.
+	// first head read can catch them all up together. Blocks it (or a catch-up) has to
+	// skip are recorded and retried; those a previous run left are loaded first.
 	if m.scanner != nil {
+		m.loadPendingGaps()
 		if err := m.scanner.Start(); err != nil {
 			return fmt.Errorf("failed to start block scanner: %w", err)
 		}
+		go m.gapRetryLoop()
 	}
 
 	return nil
@@ -639,7 +655,7 @@ func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 			// Periodically update current block from monitor
 			if wrapper.Monitor != nil {
 				currentBlock := wrapper.Monitor.GetLastBlockNumber()
-				if wrapper.advanceCurrentBlock(currentBlock) {
+				if wrapper.advanceCurrentBlock(currentBlock) && m.db != nil {
 					subscriptionID := wrapper.current().SubscriptionID
 					if err := m.db.SubscriptionRepo.UpdateCurrentBlock(m.ctx, subscriptionID, currentBlock); err != nil {
 						m.logger.Warn().Err(err).Str("subscriptionId", subscriptionID).Msg("Failed to store current block")
@@ -662,6 +678,11 @@ func (m *Manager) processEvents(wrapper *MonitorWrapper) {
 
 			// Usage event, then filters and routing
 			if !m.routeMonitorEvent(sub, event) {
+				continue
+			}
+
+			if m.db == nil {
+				wrapper.advanceCurrentBlock(event.BlockNumber)
 				continue
 			}
 

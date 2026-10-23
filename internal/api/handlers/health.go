@@ -29,7 +29,18 @@ type HealthResponse struct {
 	ActiveMonitors   int    `json:"activeMonitors"`
 	ConnectedClients int    `json:"connectedClients,omitempty"`
 	Uptime           int64  `json:"uptime,omitempty"`
+	// Monitoring carries the shared block scanner's counters (skippedBlocks among
+	// them), the energy_usage delivery counters and the skipped blocks (gaps) waiting
+	// for a retry, for alerting.
+	Monitoring *subscription.MonitoringStats `json:"monitoring,omitempty"`
 }
+
+// monitoringStatsProvider is implemented by a manager that exposes MonitoringStats.
+type monitoringStatsProvider interface {
+	MonitoringStats() subscription.MonitoringStats
+}
+
+var _ monitoringStatsProvider = (*subscription.Manager)(nil)
 
 var startTime = time.Now()
 
@@ -37,13 +48,18 @@ var startTime = time.Now()
 func (h *HealthHandler) HealthCheck(c *fiber.Ctx) error {
 	uptime := int64(time.Since(startTime).Seconds())
 
-	return c.JSON(HealthResponse{
+	resp := HealthResponse{
 		Status:         "ok",
 		Version:        h.version,
 		Timestamp:      time.Now().Unix(),
 		ActiveMonitors: h.manager.GetActiveMonitorsCount(),
 		Uptime:         uptime,
-	})
+	}
+	if p, ok := h.manager.(monitoringStatsProvider); ok {
+		st := p.MonitoringStats()
+		resp.Monitoring = &st
+	}
+	return c.JSON(resp)
 }
 
 // ReadinessCheck handles GET /api/v1/ready

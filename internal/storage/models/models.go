@@ -115,3 +115,23 @@ type Webhook struct {
 	CreatedAt      time.Time          `bson:"created_at" json:"createdAt"`
 	UpdatedAt      time.Time          `bson:"updated_at" json:"updatedAt"`
 }
+
+// ScannerGap is a block the shared block scanner (or a watched address catching up on
+// its own) gave up after repeated failed fetches. The subscription manager retries it
+// and records the outcome, so a skipped block is never silent.
+type ScannerGap struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	BlockNumber int64              `bson:"block_number" json:"blockNumber"`
+	// Address is the watched address that skipped the block while catching up on its
+	// own; empty when the shared scanner skipped it for every watched address.
+	Address   string    `bson:"address,omitempty" json:"address,omitempty"`
+	Error     string    `bson:"error" json:"error"` // the last fetch error before the skip
+	SkippedAt time.Time `bson:"skipped_at" json:"skippedAt"`
+	// Attempts counts the retries after the skip; LastError is the error of the latest.
+	Attempts  int    `bson:"attempts" json:"attempts"`
+	LastError string `bson:"last_error,omitempty" json:"lastError,omitempty"`
+	// RetriedAt is set once the block was read again and its events routed.
+	RetriedAt *time.Time `bson:"retried_at,omitempty" json:"retriedAt,omitempty"`
+	// AbandonedAt is set when the retries were given up.
+	AbandonedAt *time.Time `bson:"abandoned_at,omitempty" json:"abandonedAt,omitempty"`
+}

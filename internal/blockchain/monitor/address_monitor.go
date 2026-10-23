@@ -520,6 +520,49 @@ func (m *AddressMonitor) addressToHex(address string) string {
 	return hex.EncodeToString(decoded)
 }
 
+// ScanBlock hands the events of the watched address in an already fetched block to
+// callback, in block order, and returns how many there were. It reads the transaction
+// info of each matching transaction but never the block itself.
+func (m *AddressMonitor) ScanBlock(block *core.Block, callback func(*AddressEvent)) int {
+	if block == nil || block.GetBlockHeader() == nil {
+		return 0
+	}
+	blockNum := block.GetBlockHeader().GetRawData().GetNumber()
+	blockHash := blockHashOf(block)
+	ts := block.GetBlockHeader().GetRawData().GetTimestamp()
+	found := 0
+	for _, tx := range block.GetTransactions() {
+		if !m.isAddressInTransaction(tx) {
+			continue
+		}
+		event, err := m.extractEvent(block, tx)
+		if err != nil {
+			m.logger.Warn().
+				Err(err).
+				Str("txID", m.parser.CalculateTransactionID(tx)).
+				Int64("block", blockNum).
+				Msg("Error extracting event during historical scan")
+			continue
+		}
+		if event == nil {
+			continue
+		}
+		event.BlockNumber = blockNum
+		event.BlockHash = blockHash
+		event.BlockTimestamp = ts
+		if callback != nil {
+			callback(event)
+		}
+		found++
+		m.logger.Info().
+			Int64("block", blockNum).
+			Str("txHash", event.TransactionHash).
+			Str("type", event.ContractType).
+			Msg("Historical event found")
+	}
+	return found
+}
+
 // ScanHistorical scans a range of historical blocks for the watched address
 // This is used to catch up on past transactions when a new wallet is added
 // The callback function is called for each event found
@@ -580,44 +623,7 @@ func (m *AddressMonitor) ScanHistorical(fromBlock, toBlock int64, callback func(
 			continue
 		}
 
-		blockHeader := block.GetBlockHeader().GetRawData()
-		blockHash := hex.EncodeToString(block.GetBlockHeader().GetWitnessSignature())
-		transactions := block.GetTransactions()
-
-		// Check each transaction in the block
-		for _, tx := range transactions {
-			if m.isAddressInTransaction(tx) {
-				event, err := m.extractEvent(block, tx)
-				if err != nil {
-					txID := m.parser.CalculateTransactionID(tx)
-					m.logger.Warn().
-						Err(err).
-						Str("txID", txID).
-						Int64("block", blockNum).
-						Msg("Error extracting event during historical scan")
-					continue
-				}
-
-				if event != nil {
-					event.BlockNumber = blockNum
-					event.BlockHash = blockHash
-					event.BlockTimestamp = blockHeader.GetTimestamp()
-
-					// Call the callback with the event
-					if callback != nil {
-						callback(event)
-					}
-
-					eventsFound++
-
-					m.logger.Info().
-						Int64("block", blockNum).
-						Str("txHash", event.TransactionHash).
-						Str("type", event.ContractType).
-						Msg("Historical event found")
-				}
-			}
-		}
+		eventsFound += int64(m.ScanBlock(block, callback))
 
 		processedBlocks++
 
