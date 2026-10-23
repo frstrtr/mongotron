@@ -894,11 +894,16 @@ is down never makes a block be skipped. After 10 counted failures in a row the b
 skipped and recorded as a gap (next section).
 
 On the shared scanner an event waits for room in its monitor's channel instead of being
-dropped: the stored `currentBlock` of an address never passes an event that was not
-handed to the router. Only that address's queue waits; the scanner and the other
-addresses go on.
+dropped, and the manager waits for room in the router's queue instead of dropping: the
+stored `currentBlock` of an address never passes an event that was not handed to the
+router. Only that address waits; the scanner and the other addresses go on. The
+periodic save of `currentBlock` skips a round while events still wait in the channel,
+and a monitor that stops (unsubscribe, shutdown) routes the events already in its
+channel before it ends. Every head read and block fetch has a 30 s deadline.
 
-`monitor.sharedScanner: false` restores one polling loop per watched address.
+`monitor.sharedScanner: false` restores one polling loop per watched address. That mode
+keeps its old behaviour: a block whose fetch fails is skipped (logged) and no gap is
+recorded or retried.
 
 ### Skipped blocks and monitoring
 
@@ -906,11 +911,13 @@ Every skipped block is written to the `scanner_gaps` collection (block, address 
 catch-up gap or empty for the scanner, error, time, retry attempts, last error, retried
 or abandoned time) and logged as a Warn with stable fields: `event=block_skipped`
 (scanner) and `event=scanner_gap_recorded` (manager), with `block`, `address`, `error`.
-The manager retries pending gaps every minute, 10 per round: one block read per gap,
-then the block's events are routed through the normal pipeline for every watched
-address (or the one address of a catch-up gap). After 60 failed retries (about an hour)
-a gap is abandoned with an Error log (`event=scanner_gap_abandoned`). Gaps a previous
-run left are loaded at start.
+The manager retries pending gaps every minute, 10 per round, those tried least recently
+first (so gaps that keep failing never starve the others): one block read per gap, then
+the block's events are routed through the normal pipeline for every watched address (or
+the one address of a catch-up gap). A retry counts as an attempt only while the node
+answers a head read, so an outage never brings a gap closer to being abandoned. After
+60 counted failed retries a gap is abandoned with an Error log
+(`event=scanner_gap_abandoned`). Gaps a previous run left are loaded at start.
 
 `GET /api/v1/health` carries the counters to alert on:
 
@@ -926,8 +933,9 @@ run left are loaded at start.
 ```
 
 Alert on `scanner.skippedBlocks` or `gaps.pending` above 0 for long, `gaps.abandoned`
-above 0, `usage.dropped` or `usage.failed` growing, and `scanner.head - scanner.cursor`
-growing.
+above 0, `gaps.persistFailures` above 0 (a skipped block that is not in `scanner_gaps`
+is retried only until the next restart), `usage.dropped` or `usage.failed` growing, and
+`scanner.head - scanner.cursor` growing.
 
 Measured in `TestBlockFetchesBeforeAndAfterSharedScanner` (20 blocks):
 

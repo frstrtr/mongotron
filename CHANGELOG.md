@@ -256,6 +256,18 @@ TronTXType="Smart Contract" SCTXType="Unknown Method (0xb9f412b0)"
   being dropped, so the stored block of an address never passes an unrouted event.
 - Starting a stopped address monitor is refused; an interrupted catch-up keeps its
   progress; each monitor gets its own copy of a shared transaction's `EventData`.
+- A skipped-block retry counts as an attempt only while the node answers a head read,
+  so a node outage no longer abandons gaps; retries go to the gaps tried least
+  recently, so unreadable old gaps cannot starve newer ones.
+- The manager waits for room in the router's queue (`RouteEventWait`) instead of
+  dropping an event and moving `currentBlock` past it; an event that cannot be queued
+  because the manager stops is not counted as handled.
+- The periodic save of `currentBlock` skips a round while events wait in the monitor's
+  channel, and a stopping monitor's buffered events are routed before its event loop
+  ends (they were lost at unsubscribe and shutdown).
+- Scanner head reads and block fetches have a deadline (`ScannerConfig.ReadTimeout`,
+  30 s), so a node that accepts connections but never answers cannot hang the scanner
+  or a catch-up.
 - An address monitor could send on its event channel after `Stop` closed it, and the
   event loop could read a closed channel; both are guarded now.
 
