@@ -22,11 +22,10 @@ const (
 	DefaultCatchUpWindow int64 = 1200
 	// DefaultMaxBlockRetries is how many times in a row the scanner retries one block
 	// before it skips it (the per-address monitors skipped a failed block at once).
+	// Only failures while the node answers the head count: a node that is down never
+	// makes a block be skipped.
 	DefaultMaxBlockRetries = 10
 
-	// catchUpAttempts is how many times a monitor catching up on its own tries one block.
-	catchUpAttempts   = 3
-	catchUpRetryDelay = time.Second
 	// statsLogEvery is how often (in scanned blocks, about one hour) the scanner logs its counters.
 	statsLogEvery = 1200
 )
@@ -41,8 +40,23 @@ type ScannerConfig struct {
 	// catches up on its own and then joins. Default 1200 blocks.
 	CatchUpWindow int64
 	// MaxBlockRetries is how many consecutive failed fetches of one block the scanner
-	// accepts before it skips that block (default 10).
+	// (and a monitor catching up on its own, one poll interval apart) accepts before it
+	// skips that block (default 10).
 	MaxBlockRetries int
+	// OnSkip, when set, is called for every skipped block (outside the scanner's locks),
+	// so the caller can record the gap and retry it later.
+	OnSkip func(SkippedBlock)
+}
+
+// SkippedBlock describes a block given up after MaxBlockRetries failed fetches.
+type SkippedBlock struct {
+	Block int64
+	// Address is the watched address that was catching up on its own; empty when the
+	// shared scanner skipped the block for every watched address.
+	Address  string
+	Attempts int
+	Err      string
+	At       time.Time
 }
 
 // ScannerStats are the scanner's counters since it was created.
@@ -301,26 +315,60 @@ func (s *BlockScanner) fetchBlock(ctx context.Context, num int64) (*core.Block, 
 	return block, nil
 }
 
-// blockFailed records a failed fetch of block num. After MaxBlockRetries failures in a
-// row the block is skipped (logged as an error) so one bad block cannot stop the scanner.
+// blockFailed records a failed fetch of block num (the head was read just before, so
+// the node answers). After MaxBlockRetries failures in a row the block is skipped and
+// reported (see reportSkip) so one bad block cannot stop the scanner.
 func (s *BlockScanner) blockFailed(num int64, err error) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.failBlock == num {
 		s.failCount++
 	} else {
 		s.failBlock, s.failCount = num, 1
 	}
 	if s.failCount < s.cfg.MaxBlockRetries {
-		return fmt.Errorf("block %d (attempt %d of %d): %w", num, s.failCount, s.cfg.MaxBlockRetries, err)
+		attempt := s.failCount
+		s.mu.Unlock()
+		return fmt.Errorf("block %d (attempt %d of %d): %w", num, attempt, s.cfg.MaxBlockRetries, err)
 	}
 	s.failCount = 0
 	if num > s.cursor {
 		s.cursor = num
 		s.dispatched.Store(num)
 	}
-	s.skippedBlocks.Add(1)
+	s.mu.Unlock()
+	s.reportSkip(num, "", s.cfg.MaxBlockRetries, err)
 	return fmt.Errorf("block %d skipped after %d failed fetches: %w", num, s.cfg.MaxBlockRetries, err)
+}
+
+// reportSkip counts a skipped block, logs it with stable fields and hands it to OnSkip.
+// address is the watched address of a monitor catching up on its own, empty for the
+// shared scanner.
+func (s *BlockScanner) reportSkip(num int64, address string, attempts int, err error) {
+	s.skippedBlocks.Add(1)
+	scope := address
+	if scope == "" {
+		scope = "*"
+	}
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	s.logger.Warn().
+		Str("event", "block_skipped").
+		Int64("block", num).
+		Str("address", scope).
+		Int("attempts", attempts).
+		Str("error", msg).
+		Msg("Block skipped after repeated fetch failures; recorded as a gap")
+	if s.cfg.OnSkip != nil {
+		s.cfg.OnSkip(SkippedBlock{Block: num, Address: address, Attempts: attempts, Err: msg, At: time.Now()})
+	}
+}
+
+// nodeAnswers reports whether the node answers a head read right now.
+func (s *BlockScanner) nodeAnswers(ctx context.Context) bool {
+	_, _, err := s.readHead(ctx)
+	return err == nil
 }
 
 // dispatchBlock matches every transaction of the block against the watched addresses
@@ -528,7 +576,10 @@ type sharedTx struct {
 	err   error
 }
 
-// eventCopy returns a copy of the transaction's event for one monitor.
+// eventCopy returns a copy of the transaction's event for one monitor. EventData is
+// copied deeply, so a consumer may change its own copy; RawTransaction and RawTxInfo
+// are shared by every watched address in the transaction and must be treated as
+// read-only.
 func (t *sharedTx) eventCopy() (*AddressEvent, error) {
 	t.once.Do(func() {
 		s := t.scanner
@@ -544,7 +595,43 @@ func (t *sharedTx) eventCopy() (*AddressEvent, error) {
 		return nil, t.err
 	}
 	cp := *t.event
+	cp.EventData = copyEventData(t.event.EventData)
 	return &cp, nil
+}
+
+// copyEventData copies an EventData map with its nested maps and slices.
+func copyEventData(in map[string]interface{}) map[string]interface{} {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]interface{}, len(in))
+	for k, v := range in {
+		out[k] = copyEventValue(v)
+	}
+	return out
+}
+
+func copyEventValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		return copyEventData(t)
+	case []map[string]interface{}:
+		out := make([]map[string]interface{}, len(t))
+		for i, m := range t {
+			out[i] = copyEventData(m)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(t))
+		for i, e := range t {
+			out[i] = copyEventValue(e)
+		}
+		return out
+	case []string:
+		return append([]string(nil), t...)
+	default:
+		return v
+	}
 }
 
 type feedItem struct {

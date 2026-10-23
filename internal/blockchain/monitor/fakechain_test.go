@@ -26,6 +26,7 @@ type fakeChain struct {
 	infos  map[string]*core.TransactionInfo
 
 	headerUnsupported bool
+	headDown          bool          // head reads fail (node down)
 	failByNum         map[int64]int // remaining failures per block number
 	infoGate          chan struct{} // when set, transaction info reads wait for it
 
@@ -96,6 +97,9 @@ func (c *fakeChain) GetNowBlock(ctx context.Context) (*core.Block, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.nowCalls++
+	if c.headDown {
+		return nil, errors.New("node unreachable")
+	}
 	return c.blocks[c.head], nil
 }
 
@@ -138,6 +142,9 @@ func (c *fakeChain) GetHeadBlockNumber(ctx context.Context) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.headerCalls++
+	if c.headDown {
+		return 0, errors.New("node unreachable")
+	}
 	if c.headerUnsupported {
 		return 0, fmt.Errorf("%w: rpc error: code = Unimplemented", client.ErrHeaderOnlyUnsupported)
 	}
@@ -145,6 +152,18 @@ func (c *fakeChain) GetHeadBlockNumber(ctx context.Context) (int64, error) {
 }
 
 type chainCounts struct{ now, byNum, header, info int }
+
+func (c *fakeChain) setFailures(block int64, n int) {
+	c.mu.Lock()
+	c.failByNum[block] = n
+	c.mu.Unlock()
+}
+
+func (c *fakeChain) setHeadDown(down bool) {
+	c.mu.Lock()
+	c.headDown = down
+	c.mu.Unlock()
+}
 
 func (c *fakeChain) counts() chainCounts {
 	c.mu.Lock()

@@ -51,8 +51,10 @@ type AddressEvent struct {
 	Success         bool
 	EventType       string
 	EventData       map[string]interface{}
-	RawTransaction  *core.Transaction
-	RawTxInfo       *core.TransactionInfo
+	// RawTransaction and RawTxInfo may be shared by the events of every watched
+	// address in the same transaction: consumers must not modify them.
+	RawTransaction *core.Transaction
+	RawTxInfo      *core.TransactionInfo
 }
 
 // Config holds address monitor configuration
@@ -132,12 +134,17 @@ func NewAddressMonitorFromSource(
 	return monitor, nil
 }
 
-// Start begins monitoring the blockchain
+// Start begins monitoring the blockchain. A stopped monitor cannot be started again:
+// create a new one.
 func (m *AddressMonitor) Start() error {
 	m.mu.Lock()
 	if m.isRunning {
 		m.mu.Unlock()
 		return fmt.Errorf("monitor is already running")
+	}
+	if m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return fmt.Errorf("monitor was stopped")
 	}
 	m.isRunning = true
 	if m.scanner != nil {
@@ -172,6 +179,10 @@ func (m *AddressMonitor) Start() error {
 
 // Stop stops the monitor
 func (m *AddressMonitor) Stop() {
+	// Cancel first: it wakes a send that waits for room in the event channel, which
+	// holds the read lock Stop needs.
+	m.cancel()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -183,32 +194,61 @@ func (m *AddressMonitor) Stop() {
 	if m.scanner != nil && m.feed != nil {
 		m.scanner.unsubscribe(m.feed)
 	}
-	m.cancel()
 	m.isRunning = false
 	close(m.eventChannel)
 }
 
-// emit sends an event to the channel without blocking (a full channel drops it, as
-// before). It never sends after Stop closed the channel.
-func (m *AddressMonitor) emit(event *AddressEvent) {
+// emit hands an event to the channel and reports whether it was delivered. It never
+// sends after Stop closed the channel.
+//
+// On the shared scanner it waits for room in the channel (until the monitor stops):
+// the scanner counts a match as handled once it was handed over, so dropping it
+// would let the stored block pass an event that was never routed. Waiting holds back
+// only this address's queue, never the scanner or other addresses. A polling monitor
+// keeps the non-blocking send of before (a full channel drops the event).
+func (m *AddressMonitor) emit(event *AddressEvent) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if !m.isRunning {
-		return
+		return false
+	}
+	if m.scanner != nil {
+		select {
+		case m.eventChannel <- event:
+			m.logDetected(event)
+			return true
+		case <-m.ctx.Done():
+			m.logger.Warn().
+				Str("address", m.watchAddress).
+				Int64("block", event.BlockNumber).
+				Str("txHash", event.TransactionHash).
+				Msg("Monitor stopping: event not delivered (the stored block stays before it)")
+			return false
+		}
 	}
 	select {
 	case m.eventChannel <- event:
-		m.logger.Info().
+		m.logDetected(event)
+		return true
+	default:
+		m.logger.Warn().
+			Str("address", m.watchAddress).
 			Int64("block", event.BlockNumber).
 			Str("txHash", event.TransactionHash).
-			Str("from", event.From).
-			Str("to", event.To).
-			Int64("amount", event.Amount).
-			Str("type", event.ContractType).
-			Msg("Address event detected")
-	default:
-		m.logger.Warn().Msg("Event channel full, dropping event")
+			Msg("Event channel full, dropping event")
+		return false
 	}
+}
+
+func (m *AddressMonitor) logDetected(event *AddressEvent) {
+	m.logger.Info().
+		Int64("block", event.BlockNumber).
+		Str("txHash", event.TransactionHash).
+		Str("from", event.From).
+		Str("to", event.To).
+		Int64("amount", event.Amount).
+		Str("type", event.ContractType).
+		Msg("Address event detected")
 }
 
 // Events returns the channel for receiving address events
@@ -245,7 +285,11 @@ func (m *AddressMonitor) feedLoop(feed *scanFeed) {
 			Int64("from", from).
 			Int64("to", to).
 			Msg("Address is behind the shared scanner: catching up on its own first")
-		m.catchUp(feed, from, to)
+		if !m.catchUp(feed, from, to) {
+			// Stopped before the range was done: the progress stays at the last
+			// block the catch-up finished.
+			return
+		}
 		feed.finishCatchUp()
 	}
 
@@ -264,8 +308,9 @@ func (m *AddressMonitor) feedLoop(feed *scanFeed) {
 					Err(err).
 					Int64("block", it.block).
 					Msg("Error extracting event from transaction")
-			} else if event != nil {
-				m.emit(event)
+			} else if event != nil && !m.emit(event) {
+				// Stopping: the match stays unhandled, so the progress stays before it.
+				return
 			}
 			feed.done()
 		}
@@ -277,34 +322,51 @@ func (m *AddressMonitor) feedLoop(feed *scanFeed) {
 	}
 }
 
-// catchUp reads blocks from..to on its own (the scanner is already past them).
-func (m *AddressMonitor) catchUp(feed *scanFeed, from, to int64) {
+// catchUp reads blocks from..to on its own (the scanner is already past them), with the
+// scanner's policy: a block that fails is retried one poll interval later; a failure
+// counts only while the node answers the head (a node that is down never makes the
+// catch-up skip a block); after MaxBlockRetries counted failures the block is skipped
+// and reported as a gap of this address (ScannerConfig.OnSkip). It reports whether the
+// whole range was done; false when the monitor stopped first.
+func (m *AddressMonitor) catchUp(feed *scanFeed, from, to int64) bool {
+	sc := m.scanner
 	for blockNum := from; blockNum <= to; blockNum++ {
-		var err error
-		for attempt := 1; attempt <= catchUpAttempts; attempt++ {
+		failures := 0
+		for {
 			if m.ctx.Err() != nil {
-				return
+				return false
 			}
-			m.scanner.catchUpFetches.Add(1)
-			if err = m.processBlock(blockNum); err == nil {
+			sc.catchUpFetches.Add(1)
+			err := m.processBlock(blockNum)
+			if m.ctx.Err() != nil {
+				// Stopped while the block was handled: it does not count as done
+				return false
+			}
+			if err == nil {
 				break
 			}
-			if attempt < catchUpAttempts {
-				select {
-				case <-m.ctx.Done():
-					return
-				case <-time.After(catchUpRetryDelay):
-				}
+			if sc.nodeAnswers(m.ctx) {
+				failures++
 			}
-		}
-		if err != nil {
-			m.logger.Error().
+			if failures >= sc.cfg.MaxBlockRetries {
+				sc.reportSkip(blockNum, m.watchAddress, failures, err)
+				break
+			}
+			m.logger.Warn().
 				Err(err).
+				Str("address", m.watchAddress).
 				Int64("block", blockNum).
-				Msg("Catch-up: block skipped after failed fetches")
+				Int("countedFailures", failures).
+				Msg("Catch-up: block fetch failed, retrying after the poll interval")
+			select {
+			case <-m.ctx.Done():
+				return false
+			case <-time.After(sc.cfg.PollInterval):
+			}
 		}
 		feed.catchUpProgress(blockNum)
 	}
+	return true
 }
 
 // monitorLoop continuously polls for new blocks

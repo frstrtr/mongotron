@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -631,5 +632,266 @@ func BenchmarkBlockFanOut(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// skipRecorder collects the blocks a scanner reports as skipped.
+type skipRecorder struct {
+	mu    sync.Mutex
+	skips []SkippedBlock
+}
+
+func (r *skipRecorder) record(s SkippedBlock) {
+	r.mu.Lock()
+	r.skips = append(r.skips, s)
+	r.mu.Unlock()
+}
+
+func (r *skipRecorder) all() []SkippedBlock {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]SkippedBlock(nil), r.skips...)
+}
+
+// behindScanner sets up a scanner past block testHead+10 (blocks 1001..1010, address 5
+// receiving in 1004 and 1008) and returns it with the chain; the caller subscribes a
+// monitor for address 5 that starts behind.
+func behindScanner(t *testing.T, cfg ScannerConfig) (*fakeChain, *BlockScanner, []int64) {
+	t.Helper()
+	chain := newFakeChain(testHead)
+	sc := NewBlockScanner(chain, cfg, testLog())
+	newScannerMonitor(t, sc, 0, testHead)
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var want []int64
+	for b := 1; b <= 10; b++ {
+		if b == 4 || b == 8 {
+			want = append(want, addTrafficBlock(chain, 5))
+		} else {
+			addTrafficBlock(chain, 0)
+		}
+	}
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return chain, sc, want
+}
+
+func TestCatchUpRetriesATransientFailureWithoutSkipping(t *testing.T) {
+	rec := &skipRecorder{}
+	chain, sc, want := behindScanner(t, ScannerConfig{PollInterval: time.Millisecond, MaxBlockRetries: 5, OnSkip: rec.record})
+	chain.setFailures(want[0], 4) // fails 4 times, below MaxBlockRetries
+
+	late := newScannerMonitor(t, sc, 5, testHead+1)
+	got := collect(t, late.Events(), 2)
+	if got[0].BlockNumber != want[0] || got[1].BlockNumber != want[1] {
+		t.Fatalf("events at %d, %d; want %v (the deposit after the transient failure must not be lost)", got[0].BlockNumber, got[1].BlockNumber, want)
+	}
+	waitUntil(t, "catch-up done", func() bool { return late.GetLastBlockNumber() == testHead+10 })
+	if skips := rec.all(); len(skips) != 0 {
+		t.Fatalf("a transient failure must not skip: %+v", skips)
+	}
+}
+
+func TestCatchUpNeverSkipsWhileTheNodeIsDown(t *testing.T) {
+	rec := &skipRecorder{}
+	chain, sc, want := behindScanner(t, ScannerConfig{PollInterval: time.Millisecond, MaxBlockRetries: 3, OnSkip: rec.record})
+	chain.setFailures(want[0], 1_000_000)
+	chain.setHeadDown(true)
+
+	late := newScannerMonitor(t, sc, 5, testHead+1)
+	waitUntil(t, "many failed attempts", func() bool { return sc.Stats().CatchUpFetches > 30 })
+	if skips := rec.all(); len(skips) != 0 {
+		t.Fatalf("failures while the node is down must not skip: %+v", skips)
+	}
+	if got := late.GetLastBlockNumber(); got != want[0]-1 {
+		t.Fatalf("progress = %d during the outage, want %d (before the failing block)", got, want[0]-1)
+	}
+
+	chain.setFailures(want[0], 0)
+	chain.setHeadDown(false)
+	got := collect(t, late.Events(), 2)
+	if got[0].BlockNumber != want[0] || got[1].BlockNumber != want[1] {
+		t.Fatalf("events at %d, %d; want %v", got[0].BlockNumber, got[1].BlockNumber, want)
+	}
+}
+
+func TestCatchUpReportsAPersistentFailureAsAGapOfTheAddress(t *testing.T) {
+	rec := &skipRecorder{}
+	chain, sc, want := behindScanner(t, ScannerConfig{PollInterval: time.Millisecond, MaxBlockRetries: 3, OnSkip: rec.record})
+	chain.setFailures(want[0], 1_000_000)
+
+	late := newScannerMonitor(t, sc, 5, testHead+1)
+	if ev := collect(t, late.Events(), 1)[0]; ev.BlockNumber != want[1] {
+		t.Fatalf("event at %d, want %d", ev.BlockNumber, want[1])
+	}
+	skips := rec.all()
+	_, addr := testAddr(5)
+	if len(skips) != 1 || skips[0].Block != want[0] || skips[0].Address != addr || skips[0].Attempts != 3 || skips[0].Err == "" {
+		t.Fatalf("skips = %+v, want block %d of %s after 3 attempts", skips, want[0], addr)
+	}
+	if st := sc.Stats(); st.SkippedBlocks != 1 {
+		t.Fatalf("skipped blocks = %d, want 1", st.SkippedBlocks)
+	}
+}
+
+func TestInterruptedCatchUpKeepsItsProgress(t *testing.T) {
+	chain, sc, want := behindScanner(t, ScannerConfig{PollInterval: time.Millisecond, MaxBlockRetries: 1_000_000})
+	chain.setFailures(want[0], 1_000_000)
+
+	late := newScannerMonitor(t, sc, 5, testHead+1)
+	waitUntil(t, "the catch-up to reach the failing block", func() bool { return sc.Stats().CatchUpFetches > 5 })
+	late.Stop()
+	if got := late.GetLastBlockNumber(); got != want[0]-1 {
+		t.Fatalf("progress after an interrupted catch-up = %d, want %d (never past the unread block)", got, want[0]-1)
+	}
+}
+
+func TestEventsAreNeverDroppedOnTheSharedScanner(t *testing.T) {
+	const n = 150 // more than the 100-slot event channel
+	chain := newFakeChain(testHead)
+	sc := NewBlockScanner(chain, ScannerConfig{PollInterval: time.Hour}, testLog())
+	m := newScannerMonitor(t, sc, 0, testHead)
+	other := newScannerMonitor(t, sc, 1, testHead)
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stranger, _ := testAddr(60000)
+	to, _ := testAddr(0)
+	toOther, _ := testAddr(1)
+	var txs []*core.Transaction
+	for i := 0; i < n; i++ {
+		txs = append(txs, trxTransferTx(stranger, to, int64(i+1)))
+	}
+	b := chain.addBlock(txs...)
+	b2 := chain.addBlock(trxTransferTx(stranger, toOther, 7))
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nobody reads m's channel yet: m waits, the scanner and the other address do not.
+	if ev := collect(t, other.Events(), 1)[0]; ev.BlockNumber != b2 {
+		t.Fatalf("other address got block %d, want %d", ev.BlockNumber, b2)
+	}
+	waitUntil(t, "m's channel to fill", func() bool { return len(m.Events()) == cap(m.Events()) })
+	if got := m.GetLastBlockNumber(); got != b-1 {
+		t.Fatalf("progress = %d while events of block %d wait for room, want %d", got, b, b-1)
+	}
+
+	events := collect(t, m.Events(), n)
+	for i, ev := range events {
+		if ev.Amount != int64(i+1) {
+			t.Fatalf("event %d has amount %d, want %d (none dropped, order kept)", i, ev.Amount, i+1)
+		}
+	}
+	waitUntil(t, "progress", func() bool { return m.GetLastBlockNumber() == b2 })
+}
+
+func TestStopWakesASendWaitingForRoom(t *testing.T) {
+	chain := newFakeChain(testHead)
+	sc := NewBlockScanner(chain, ScannerConfig{PollInterval: time.Hour}, testLog())
+	m := newScannerMonitor(t, sc, 0, testHead)
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stranger, _ := testAddr(60000)
+	to, _ := testAddr(0)
+	var txs []*core.Transaction
+	for i := 0; i < 120; i++ {
+		txs = append(txs, trxTransferTx(stranger, to, 1))
+	}
+	b := chain.addBlock(txs...)
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the channel to fill", func() bool { return len(m.Events()) == cap(m.Events()) })
+
+	done := make(chan struct{})
+	go func() { m.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop deadlocked with a send waiting for room")
+	}
+	if got := m.GetLastBlockNumber(); got != b-1 {
+		t.Fatalf("progress = %d after a stop with undelivered events of block %d, want %d", got, b, b-1)
+	}
+}
+
+func TestStartAfterStopIsRefused(t *testing.T) {
+	chain := newFakeChain(testHead)
+	sc := NewBlockScanner(chain, ScannerConfig{PollInterval: time.Hour}, testLog())
+	m := newScannerMonitor(t, sc, 0, testHead)
+	m.Stop()
+	if err := m.Start(); err == nil {
+		t.Fatal("Start after Stop must fail")
+	}
+	if st := sc.Stats(); st.Subscribers != 0 {
+		t.Fatalf("a refused Start must not subscribe: %d subscribers", st.Subscribers)
+	}
+
+	polling, err := NewAddressMonitorFromSource(chain, Config{WatchAddress: m.watchAddress, StartBlock: testHead, PollInterval: time.Hour}, testLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	polling.Stop()
+	if err := polling.Start(); err == nil {
+		t.Fatal("Start after Stop must fail for a polling monitor too")
+	}
+}
+
+func TestSharedEventDataIsCopiedPerAddress(t *testing.T) {
+	chain := newFakeChain(testHead)
+	sc := NewBlockScanner(chain, ScannerConfig{PollInterval: time.Hour}, testLog())
+	mons := newScannerMonitors(t, sc, 2, testHead)
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	from, _ := testAddr(0)
+	to, _ := testAddr(1)
+	tx := triggerTx(from, to, []byte{0xa9, 0x05, 0x9c, 0xbb, 0, 0})
+	chain.addBlock(tx)
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a := collect(t, mons[0].Events(), 1)[0]
+	b := collect(t, mons[1].Events(), 1)[0]
+	a.EventData["netUsage"] = int64(-1)
+	a.EventData["added"] = true
+	if b.EventData["netUsage"] != int64(268) || b.EventData["added"] != nil {
+		t.Fatalf("one address's EventData change leaked into the other's: %+v", b.EventData)
+	}
+}
+
+func TestScannerReportsASkippedBlock(t *testing.T) {
+	rec := &skipRecorder{}
+	chain := newFakeChain(testHead)
+	sc := NewBlockScanner(chain, ScannerConfig{PollInterval: time.Hour, MaxBlockRetries: 2, OnSkip: rec.record}, testLog())
+	newScannerMonitor(t, sc, 0, testHead)
+	if err := sc.scanOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	b := addTrafficBlock(chain, 0)
+	chain.setFailures(b, 100)
+	_ = sc.scanOnce(context.Background())
+	if len(rec.all()) != 0 {
+		t.Fatal("skipped after one failure")
+	}
+	_ = sc.scanOnce(context.Background())
+	skips := rec.all()
+	if len(skips) != 1 || skips[0].Block != b || skips[0].Address != "" || skips[0].Attempts != 2 || skips[0].At.IsZero() {
+		t.Fatalf("skips = %+v, want block %d for every address", skips, b)
+	}
+
+	// A head read that fails never counts toward a skip
+	b2 := addTrafficBlock(chain, 0)
+	chain.setFailures(b2, 100)
+	chain.setHeadDown(true)
+	for i := 0; i < 5; i++ {
+		_ = sc.scanOnce(context.Background())
+	}
+	if len(rec.all()) != 1 {
+		t.Fatal("a node that is down made the scanner skip a block")
 	}
 }
