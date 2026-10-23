@@ -80,7 +80,7 @@ if "TransactionID" in data or "TransactionHash" in data:
 
 ### Run Tests
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source venv/bin/activate
 
 # Test address conversion
@@ -93,8 +93,8 @@ python examples/python/event_monitor.py
 ## Current System Status
 
 ✅ **API Server**: Running on localhost:8080
-✅ **MongoDB**: Connected (nileVM.lan:27017)
-✅ **Tron Node**: Connected (nileVM.lan:50051 - Nile testnet)
+✅ **MongoDB**: Connected (nile-node.example.com:27017)
+✅ **Tron Node**: Connected (nile-node.example.com:50051 - Nile testnet)
 ✅ **Event Monitor**: Ready with address conversion
 ✅ **Active Subscriptions**: 2 subscriptions monitoring USDT contract
 ✅ **Events Captured**: 23 total events in database
@@ -140,7 +140,7 @@ To:          TXYZopYRdj2D9XRtbG411XZZ3kM5VkAeBf
 To see it in action with live events:
 
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source venv/bin/activate
 python examples/python/event_monitor.py
 ```

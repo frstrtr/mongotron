@@ -44,8 +44,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 ACTIVE_SUBS=$(curl -s http://localhost:8080/api/v1/subscriptions | jq -r '[.subscriptions[] | select(.status=="active")] | length')
 TOTAL_EVENTS=$(curl -s http://localhost:8080/api/v1/events | jq -r '.total')
 
-echo "   🟢 MongoDB:         nileVM.lan:27017"
-echo "   🟢 Tron Node:       nileVM.lan:50051 (Nile Testnet)"
+echo "   🟢 MongoDB:         nile-node.example.com:27017"
+echo "   🟢 Tron Node:       nile-node.example.com:50051 (Nile Testnet)"
 echo "   📈 Active Subs:     $ACTIVE_SUBS subscriptions"
 echo "   📊 Events Captured: $TOTAL_EVENTS events"
 echo ""

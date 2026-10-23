@@ -228,8 +228,8 @@ If the WebSocket disconnects:
 This tool works with the MongoTron API server and requires:
 
 1. **API Server**: Running on specified URL (default: localhost:8080)
-2. **MongoDB**: Connected and operational (on nileVM.lan)
-3. **Tron Node**: Connected for blockchain data (on nileVM.lan)
+2. **MongoDB**: Connected and operational (on nile-node.example.com)
+3. **Tron Node**: Connected for blockchain data (on nile-node.example.com)
 
 ## Technical Details
 
@@ -292,7 +292,7 @@ Modify the `display_event()` method to:
 - **TRX**: Native token (no contract address)
 - Add your own contract addresses here
 
-**Note**: MongoTron is currently configured to connect to Tron Nile testnet on `nileVM.lan:50051`.
+**Note**: MongoTron is currently configured to connect to Tron Nile testnet on `nile-node.example.com:50051`.
 
 ## License
 

@@ -1,4 +1,4 @@
-# MongoTron Configuration for nileVM.lan Test Environment
+# MongoTron Configuration for nile-node.example.com Test Environment
 
 server:
   host: 0.0.0.0
@@ -9,7 +9,7 @@ server:
 
 database:
   mongodb:
-    uri: mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron
+    uri: mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron
     database: mongotron
     collections:
       addresses: addresses
@@ -20,7 +20,7 @@ database:
 blockchain:
   tron:
     node:
-      host: nileVM.lan
+      host: nile-node.example.com
       port: 50051
       use_tls: false
     connection:

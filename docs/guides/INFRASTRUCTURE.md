@@ -669,7 +669,7 @@ sudo ufw enable
 sudo ufw allow 22/tcp
 
 # Allow MongoDB (only from specific IPs)
-sudo ufw allow from 192.168.1.0/24 to any port 27017
+sudo ufw allow from 203.0.113.0/24 to any port 27017
 
 # Allow MongoTron application
 sudo ufw allow 8080/tcp
@@ -690,7 +690,7 @@ sudo systemctl enable firewalld
 
 # Allow MongoDB from specific network
 sudo firewall-cmd --permanent --add-rich-rule='
-  rule family="ipv4" source address="192.168.1.0/24" port protocol="tcp" port="27017" accept'
+  rule family="ipv4" source address="203.0.113.0/24" port protocol="tcp" port="27017" accept'
 
 # Allow application ports
 sudo firewall-cmd --permanent --add-port=8080/tcp
@@ -785,7 +785,7 @@ Update `/etc/mongod.conf`:
 ```yaml
 net:
   port: 27017
-  bindIp: 127.0.0.1,192.168.1.100  # Specific IPs only
+  bindIp: 127.0.0.1,203.0.113.100  # Specific IPs only
   ipv6: false
 ```
 

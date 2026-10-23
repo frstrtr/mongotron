@@ -298,7 +298,7 @@ transferFrom(A, B, amount) triggers:
 
 1. **Start the updated server**:
    ```bash
-   cd /home/user0/Github/mongotron
+   cd /path/to/mongotron
    pkill -f "bin/api-server"
    nohup ./bin/api-server > /tmp/api-server.log 2>&1 &
    ```

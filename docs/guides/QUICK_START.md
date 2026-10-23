@@ -3,8 +3,8 @@
 ## ✅ Your System is Already Running!
 
 **MongoTron API Server**: ✅ Running on http://localhost:8080  
-**MongoDB**: ✅ Connected to nileVM.lan:27017  
-**Tron Node**: ✅ Connected to nileVM.lan:50051 (Nile Testnet)  
+**MongoDB**: ✅ Connected to nile-node.example.com:27017  
+**Tron Node**: ✅ Connected to nile-node.example.com:50051 (Nile Testnet)  
 **Active Subscriptions**: ✅ 3 subscriptions, 3,538+ events captured
 
 ---
@@ -21,7 +21,7 @@ curl http://localhost:8080/api/v1/subscriptions | jq '.subscriptions[] | select(
 
 ### 2. Start Event Monitor (See Live Events)
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source .venv/bin/activate
 python examples/python/event_monitor.py
 ```
@@ -83,14 +83,14 @@ pkill -f "bin/api-server"
 
 ### Restart the Server
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 pkill -f "bin/api-server" && sleep 2
 nohup ./bin/api-server > /tmp/api-server.log 2>&1 &
 ```
 
 ### Rebuild the Server (after code changes)
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 go build -o bin/api-server cmd/api-server/main.go
 ```
 
@@ -125,7 +125,7 @@ python examples/python/event_monitor.py
 # This feature requires API enhancement
 # Currently, you can filter in MongoDB directly:
 
-mongosh "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron" --eval '
+mongosh "mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron" --eval '
   db.events.find({
     blockNumber: { $gte: 61090000, $lte: 61100000 }
   }).limit(10).pretty()
@@ -145,9 +145,9 @@ mongosh "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron" --eval '
 ```properties
 # From configs/.env
 MONGOTRON_PORT=8080
-TRON_NODE_HOST=nileVM.lan
+TRON_NODE_HOST=nile-node.example.com
 TRON_NODE_PORT=50051
-MONGODB_URI=mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron
+MONGODB_URI=mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron
 ```
 
 ### Monitored Contract
@@ -182,7 +182,7 @@ curl http://localhost:8080/api/v1/subscriptions | jq '.subscriptions[] | select(
 curl http://localhost:8080/api/v1/subscriptions | jq '.subscriptions[0].currentBlock'
 
 # Check MongoDB connection
-mongosh "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron" --eval "db.events.count()"
+mongosh "mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron" --eval "db.events.count()"
 ```
 
 ### Python Monitor Issues
@@ -227,7 +227,7 @@ cat docs/notes/SERVER_STATUS.md
 
 1. **Open Terminal 1** - Start the monitor:
    ```bash
-   cd /home/user0/Github/mongotron
+   cd /path/to/mongotron
    source .venv/bin/activate
    python examples/python/event_monitor.py
    ```
@@ -257,7 +257,7 @@ cat docs/notes/SERVER_STATUS.md
 
 ### Run Monitor in Background
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source .venv/bin/activate
 nohup python examples/python/event_monitor.py > /tmp/monitor.log 2>&1 &
 
@@ -284,8 +284,8 @@ cat events_backup.json | jq '.events | length'
 Your MongoTron system is **fully operational**:
 
 ✅ API Server running on port 8080  
-✅ Connected to MongoDB (nileVM.lan)  
-✅ Connected to Tron Nile testnet (nileVM.lan)  
+✅ Connected to MongoDB (nile-node.example.com)  
+✅ Connected to Tron Nile testnet (nile-node.example.com)  
 ✅ 3 active subscriptions monitoring USDT  
 ✅ 3,538+ events already captured  
 ✅ Event monitor ready to use  

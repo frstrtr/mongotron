@@ -287,7 +287,7 @@ pip install -r requirements.txt
 curl http://localhost:8080/health
 
 # Start API server
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 ./bin/api-server
 ```
 

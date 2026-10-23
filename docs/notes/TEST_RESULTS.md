@@ -92,8 +92,8 @@ None - All endpoints are fully functional!
 
 ### ✅ Connected Services
 
-- **MongoDB**: Connected to `nileVM.lan:27017` ✅
-- **Tron Node**: Connected to `nileVM.lan:50051` ✅
+- **MongoDB**: Connected to `nile-node.example.com:27017` ✅
+- **Tron Node**: Connected to `nile-node.example.com:50051` ✅
 - **API Server**: Running on `0.0.0.0:8080` ✅
 - **WebSocket Hub**: Running and accepting connections ✅
 - **Event Router**: Started and operational ✅

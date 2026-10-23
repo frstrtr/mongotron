@@ -220,7 +220,7 @@ def signal_handler(self, signum, frame):
 
 ### Manual Test
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source venv/bin/activate
 
 # Start monitor

@@ -203,12 +203,20 @@ func getSmartContractInteraction(contractAddressHex string, contractData map[str
 	return "Smart Contract"
 }
 
+// envOr returns the environment variable key, or fallback when it is unset or empty.
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func main() {
 	// Parse command line flags
 	var (
-		tronHost     = flag.String("tron-host", "nileVM.lan", "Tron node host")
+		tronHost     = flag.String("tron-host", envOr("TRON_NODE_HOST", "localhost"), "Tron node host (default from TRON_NODE_HOST)")
 		tronPort     = flag.Int("tron-port", 50051, "Tron node gRPC port")
-		mongoURI     = flag.String("mongo-uri", "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron", "MongoDB URI")
+		mongoURI     = flag.String("mongo-uri", envOr("MONGODB_URI", "mongodb://localhost:27017/mongotron"), "MongoDB URI (default from MONGODB_URI)")
 		mongoDb      = flag.String("mongo-db", "mongotron", "MongoDB database name")
 		watchAddress = flag.String("address", "", "Specific address to watch (leave empty with --monitor)")
 		startBlock   = flag.Int64("start-block", 0, "Block number to start from (0 = current)")

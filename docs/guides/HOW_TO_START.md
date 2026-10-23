@@ -17,15 +17,15 @@
 But if you need to start it again in the future:
 
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 nohup ./bin/api-server > /tmp/api-server.log 2>&1 &
 ```
 
 ### Configuration (Already Set Up)
 
 Your system is configured to use:
-- **MongoDB Server**: nileVM.lan:27017
-- **Tron Node**: nileVM.lan:50051 (Nile Testnet)
+- **MongoDB Server**: nile-node.example.com:27017
+- **Tron Node**: nile-node.example.com:50051 (Nile Testnet)
 - **API Port**: 8080
 
 Configuration file: `configs/.env` ✅ Already configured
@@ -37,7 +37,7 @@ Configuration file: `configs/.env` ✅ Already configured
 Run the event monitor to see blockchain events in real-time:
 
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source .venv/bin/activate
 python examples/python/event_monitor.py
 ```
@@ -106,7 +106,7 @@ For complete details, see:
 curl http://localhost:8080/api/v1/subscriptions | jq '.total'
 
 # Terminal 2: Start event monitor
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source .venv/bin/activate
 python examples/python/event_monitor.py
 

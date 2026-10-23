@@ -15,7 +15,7 @@ panic: close of closed channel
 
 goroutine 44 [running]:
 github.com/frstrtr/mongotron/internal/subscription.(*EventRouter).UnregisterClient(...)
-    /home/user0/Github/mongotron/internal/subscription/router.go:255 +0x26e
+    /path/to/mongotron/internal/subscription/router.go:255 +0x26e
 github.com/frstrtr/mongotron/internal/api/websocket.(*Hub).unregisterClient(...)
 ```
 
@@ -154,7 +154,7 @@ The fix was verified with:
 [1]+  Exit 2  ./bin/api-server
 
 # After fix: Server continues running
-user0  77674  26.3  0.0  3243144  28276  Sl  21:41  0:28  ./bin/api-server
+user   77674  26.3  0.0  3243144  28276  Sl  21:41  0:28  ./bin/api-server
 ✅ Server still running after delete test!
 ```
 

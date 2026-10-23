@@ -13,8 +13,8 @@
 | Component | Value |
 |-----------|-------|
 | **API Server** | http://localhost:8080 |
-| **MongoDB** | mongodb://nileVM.lan:27017/mongotron |
-| **Tron Node** | nileVM.lan:50051 (Nile Testnet) |
+| **MongoDB** | mongodb://nile-node.example.com:27017/mongotron |
+| **Tron Node** | nile-node.example.com:50051 (Nile Testnet) |
 | **Current Block** | 61,114,201 |
 | **Network** | Tron Nile Testnet |
 
@@ -51,14 +51,14 @@ pkill -f "bin/api-server"
 
 ### Restart Server
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 pkill -f "bin/api-server" && sleep 2
 nohup ./bin/api-server > /tmp/api-server.log 2>&1 &
 ```
 
 ### Start Event Monitor
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source venv/bin/activate
 python examples/python/event_monitor.py
 ```

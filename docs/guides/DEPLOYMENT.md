@@ -27,7 +27,7 @@ docker-compose -f docker-compose.prod.yml up -d
 ### Step 1: Create Secrets
 ```bash
 kubectl create secret generic mongotron-secrets \
-  --from-literal=mongodb-uri='mongodb://admin:password@mongodb:27017/mongotron' \
+  --from-literal=mongodb-uri="mongodb://admin:${MONGODB_PASSWORD}@mongodb:27017/mongotron" \
   -n mongotron
 ```
 
@@ -63,9 +63,9 @@ Access Grafana at:
 http://localhost:3000
 ```
 
-Default credentials:
+Credentials:
 - Username: admin
-- Password: admin123
+- Password: the GRAFANA_ADMIN_PASSWORD value from the environment
 
 ## Troubleshooting
 

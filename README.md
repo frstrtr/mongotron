@@ -143,8 +143,8 @@ go build -o bin/mongotron-mvp ./cmd/mvp/main.go
 ### Configuration
 
 The MVP connects to:
-- **MongoDB**: `nileVM.lan:27017` (database: `mongotron`)
-- **Tron Node**: `nileVM.lan:50051` (Nile Testnet v4.8.0)
+- **MongoDB**: `nile-node.example.com:27017` (database: `mongotron`)
+- **Tron Node**: `nile-node.example.com:50051` (Nile Testnet v4.8.0)
 
 Update these in the code if using different endpoints.
 
@@ -1102,6 +1102,9 @@ e.g. `MONGOTRON_MONITOR_SHAREDSCANNER=false` or
 
 ### Production Docker Compose (docker-compose.prod.yml)
 
+The file holds no passwords: set `MONGO_ROOT_PASSWORD` and `GRAFANA_ADMIN_PASSWORD` in the
+environment first, or `docker compose` stops with an error naming the missing variable.
+
 ```yaml
 version: '3.8'
 
@@ -1157,7 +1160,7 @@ services:
       - "27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: strongpassword
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: mongotron
     volumes:
       - mongodb-data:/data/db
@@ -1212,7 +1215,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
     volumes:
       - grafana-data:/var/lib/grafana
       - ./deployments/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro

@@ -2,7 +2,7 @@
 ║                    TELEGRAM BOT QUICK REFERENCE                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
-📍 LOCATION: /home/user0/Github/mongotron/examples/telegram-bot/
+📍 LOCATION: /path/to/mongotron/examples/telegram-bot/
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚡ QUICK START

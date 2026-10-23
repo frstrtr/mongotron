@@ -4,10 +4,10 @@ After=network.target mongotron-api.service
 
 [Service]
 Type=simple
-User=user0
-WorkingDirectory=/home/user0/Github/mongotron/examples/telegram-bot
-Environment="PATH=/home/user0/Github/mongotron/examples/telegram-bot/venv/bin"
-ExecStart=/home/user0/Github/mongotron/examples/telegram-bot/venv/bin/python bot.py
+User=mongotron
+WorkingDirectory=/path/to/mongotron/examples/telegram-bot
+Environment="PATH=/path/to/mongotron/examples/telegram-bot/venv/bin"
+ExecStart=/path/to/mongotron/examples/telegram-bot/venv/bin/python bot.py
 Restart=always
 RestartSec=10
 

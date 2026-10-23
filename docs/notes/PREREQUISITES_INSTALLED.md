@@ -44,9 +44,9 @@ All dependencies from `go.mod` have been downloaded and verified:
 
 ### Go Environment
 ```bash
-GOPATH: /home/user0/go
+GOPATH: $HOME/go
 GOROOT: /snap/go/current
-Go Binaries: /home/user0/go/bin
+Go Binaries: $HOME/go/bin
 ```
 
 ### Path Configuration
@@ -56,7 +56,7 @@ export PATH=$PATH:~/go/bin
 ```
 
 ### Docker Configuration
-- User `user0` has been added to the `docker` group
+- User `<user>` has been added to the `docker` group
 - **Note**: You may need to run `newgrp docker` or logout/login to apply group changes
 
 ---
@@ -161,7 +161,7 @@ source ~/.bashrc
 ```bash
 # Ensure Go tools are accessible
 which golangci-lint
-# Should output: /home/user0/go/bin/golangci-lint
+# Should output: $HOME/go/bin/golangci-lint
 ```
 
 ---

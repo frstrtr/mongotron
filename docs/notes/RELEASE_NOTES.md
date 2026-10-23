@@ -129,8 +129,8 @@ go build -o bin/mongotron-mvp ./cmd/mvp/main.go
 ## 🔧 Configuration
 
 **Current Default Settings:**
-- **MongoDB**: `nileVM.lan:27017` (database: `mongotron`)
-- **Tron Node**: `nileVM.lan:50051` (Nile Testnet v4.8.0)
+- **MongoDB**: `nile-node.example.com:27017` (database: `mongotron`)
+- **Tron Node**: `nile-node.example.com:50051` (Nile Testnet v4.8.0)
 - **Network**: Tron Nile Testnet
 
 To use different endpoints, update the configuration in `cmd/mvp/main.go` and rebuild.

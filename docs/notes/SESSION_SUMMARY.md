@@ -73,8 +73,8 @@ print(f"📝 Events saved to: {self.log_file}")
 
 #### Active Components
 ```
-✅ MongoDB 7.0          - nileVM.lan:27017
-✅ Tron Node (Nile)     - nileVM.lan:50051
+✅ MongoDB 7.0          - nile-node.example.com:27017
+✅ Tron Node (Nile)     - nile-node.example.com:50051
 ✅ API Server           - localhost:8080 (PID: 87378)
 ✅ Event Monitor        - Running (PID: 89043)
 ✅ Log File             - events_20251005_222831.log
@@ -104,7 +104,7 @@ print(f"📝 Events saved to: {self.log_file}")
 
 **Current Log File:**
 ```
-/home/user0/Github/mongotron/events_20251005_222831.log
+/path/to/mongotron/events_20251005_222831.log
 ```
 
 **Format:**
@@ -228,7 +228,7 @@ After Fix:
 
 **Start Monitor:**
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source venv/bin/activate
 python examples/python/event_monitor.py
 ```

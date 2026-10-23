@@ -165,7 +165,7 @@ database:
 blockchain:
   tron:
     node:
-      host: "nilevm.lan"
+      host: "nile-node.example.com"
       port: 50051
       use_tls: false
     connection:

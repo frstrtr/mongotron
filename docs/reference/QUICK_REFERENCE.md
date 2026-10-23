@@ -4,14 +4,14 @@
 
 ### Start API Server
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 go build -o bin/api-server cmd/api-server/main.go
 nohup ./bin/api-server > /tmp/api-server.log 2>&1 &
 ```
 
 ### Start Event Monitor
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source venv/bin/activate
 python examples/python/event_monitor.py
 # Or in background:
@@ -126,7 +126,7 @@ ps aux | grep api-server
 netstat -tlnp | grep 8080
 
 # Check MongoDB connection
-mongo mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron
+mongo mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron
 ```
 
 ### No Events Received
@@ -222,8 +222,8 @@ END=$(tail -1 events_*.log | awk '{print $1,$2}')
 
 ### Nile Testnet
 - **Network:** Tron Nile Testnet
-- **Tron Node:** nileVM.lan:50051
-- **MongoDB:** nileVM.lan:27017
+- **Tron Node:** nile-node.example.com:50051
+- **MongoDB:** nile-node.example.com:27017
 - **API Server:** localhost:8080
 
 ### Contracts

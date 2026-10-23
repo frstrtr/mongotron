@@ -173,7 +173,7 @@ go get github.com/tinylib/msgp/msgp
                                               ↓
                                     ┌──────────────────┐
                                     │   Tron Node      │
-                                    │  (nileVM.lan)    │
+                                    │  (nile node)     │
                                     └──────────────────┘
                                               │
                    ┌──────────────────────────┘
@@ -236,13 +236,13 @@ server:
 
 database:
   mongodb:
-    uri: "mongodb://mongotron:MongoTron2025@nileVM.lan:27017"
+    uri: "mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017"
     database: "mongotron"
 
 blockchain:
   tron:
     node:
-      host: "nileVM.lan"
+      host: "nile-node.example.com"
       port: 50051
       use_tls: false
     connection:

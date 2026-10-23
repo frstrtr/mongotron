@@ -1,13 +1,13 @@
 # 🚀 MongoTron Startup Guide
 
-Complete guide to start MongoTron with MongoDB and Tron Nile Testnet node at nileVM.lan
+Complete guide to start MongoTron with MongoDB and Tron Nile Testnet node at nile-node.example.com
 
 ## Prerequisites Check
 
 ### 1. Verify MongoDB Connection
 ```bash
 # Test MongoDB connectivity
-mongosh "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron" --eval "db.runCommand({ ping: 1 })"
+mongosh "mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron" --eval "db.runCommand({ ping: 1 })"
 ```
 
 Expected output: `{ ok: 1 }`
@@ -15,10 +15,10 @@ Expected output: `{ ok: 1 }`
 ### 2. Verify Tron Node Connection
 ```bash
 # Test Tron node gRPC connection
-grpcurl -plaintext nileVM.lan:50051 list
+grpcurl -plaintext nile-node.example.com:50051 list
 
 # Or check with curl (if HTTP API is available)
-curl -s http://nileVM.lan:8090/wallet/getnowblock | jq '.block_header.raw_data.number'
+curl -s http://nile-node.example.com:8090/wallet/getnowblock | jq '.block_header.raw_data.number'
 ```
 
 ## Quick Start (Recommended)
@@ -28,7 +28,7 @@ curl -s http://nileVM.lan:8090/wallet/getnowblock | jq '.block_header.raw_data.n
 The configuration is already set up in `configs/.env`:
 
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 
 # Start the API server
 ./bin/api-server
@@ -43,12 +43,12 @@ tail -f /tmp/api-server.log
 ### Option 2: Start with Custom Configuration
 
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 
 # Export environment variables
-export TRON_NODE_HOST=nileVM.lan
+export TRON_NODE_HOST=nile-node.example.com
 export TRON_NODE_PORT=50051
-export MONGODB_URI=mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron
+export MONGODB_URI=mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron
 
 # Start the server
 ./bin/api-server
@@ -58,7 +58,7 @@ export MONGODB_URI=mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron
 
 ### Step 1: Navigate to Project Directory
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 ```
 
 ### Step 2: Verify Binary Exists
@@ -75,8 +75,8 @@ go build -o bin/api-server cmd/api-server/main.go
 cat configs/.env
 
 # Current settings:
-# - MongoDB: nileVM.lan:27017
-# - Tron Node: nileVM.lan:50051 (Nile testnet)
+# - MongoDB: nile-node.example.com:27017
+# - Tron Node: nile-node.example.com:50051 (Nile testnet)
 # - API Port: 8080
 ```
 
@@ -128,11 +128,11 @@ MONGOTRON_PORT=8080
 MONGOTRON_HOST=0.0.0.0
 
 # Tron Node (Nile Testnet)
-TRON_NODE_HOST=nileVM.lan
+TRON_NODE_HOST=nile-node.example.com
 TRON_NODE_PORT=50051
 
 # MongoDB
-MONGODB_URI=mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron
+MONGODB_URI=mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron
 MONGODB_DATABASE=mongotron
 
 # Performance
@@ -145,22 +145,22 @@ MONGOTRON_BATCH_SIZE=1000
 
 **Tron Nile Testnet:**
 - Network ID: Nile
-- Node: nileVM.lan:50051 (gRPC)
+- Node: nile-node.example.com:50051 (gRPC)
 - Block time: ~3 seconds
 - Explorer: https://nile.tronscan.org
 
 **MongoDB:**
-- Host: nileVM.lan:27017
+- Host: nile-node.example.com:27017
 - Database: mongotron
 - User: mongotron
-- Auth: Password-based (MongoTron2025)
+- Auth: Password-based (password from MONGODB_PASSWORD)
 
 ## Using the Event Monitor
 
 Once the API server is running, you can monitor blockchain events:
 
 ```bash
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 source .venv/bin/activate
 
 # Monitor USDT transfers on Nile testnet
@@ -282,16 +282,16 @@ netstat -tuln | grep 8080
 
 **Check MongoDB connection:**
 ```bash
-mongosh "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron" --eval "db.runCommand({ ping: 1 })"
+mongosh "mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron" --eval "db.runCommand({ ping: 1 })"
 ```
 
 **Check Tron node connectivity:**
 ```bash
 # Test gRPC connection
-grpcurl -plaintext nileVM.lan:50051 list
+grpcurl -plaintext nile-node.example.com:50051 list
 
 # Or check with telnet
-telnet nileVM.lan 50051
+telnet nile-node.example.com 50051
 ```
 
 **Check logs for errors:**
@@ -303,26 +303,26 @@ tail -50 /tmp/api-server.log | grep -i error
 
 ```bash
 # Test connection string
-mongosh "mongodb://mongotron:MongoTron2025@nileVM.lan:27017/mongotron" --eval "db.adminCommand('ping')"
+mongosh "mongodb://mongotron:${MONGODB_PASSWORD}@nile-node.example.com:27017/mongotron" --eval "db.adminCommand('ping')"
 
 # Check MongoDB service
-ssh nileVM.lan "systemctl status mongod"
+ssh nile-node.example.com "systemctl status mongod"
 
 # Check network connectivity
-ping -c 3 nileVM.lan
+ping -c 3 nile-node.example.com
 ```
 
 ### Tron Node Connection Issues
 
 ```bash
 # Test gRPC port
-nc -zv nileVM.lan 50051
+nc -zv nile-node.example.com 50051
 
 # Check if Tron node is running
-ssh nileVM.lan "ps aux | grep java | grep FullNode"
+ssh nile-node.example.com "ps aux | grep java | grep FullNode"
 
 # View Tron node logs
-ssh nileVM.lan "tail -100 /path/to/tron/logs/tron.log"
+ssh nile-node.example.com "tail -100 /path/to/tron/logs/tron.log"
 ```
 
 ### No Events Being Captured
@@ -345,7 +345,7 @@ Here's a complete example from scratch:
 
 ```bash
 # 1. Navigate to project
-cd /home/user0/Github/mongotron
+cd /path/to/mongotron
 
 # 2. Stop any existing instances
 pkill -f "api-server"
@@ -389,7 +389,7 @@ python examples/python/event_monitor.py
           │                    ↓                    ↓
           │          ┌──────────────┐    ┌──────────────┐
           │          │   MongoDB    │    │  WebSocket   │
-          │          │ nileVM.lan   │    │     Hub      │
+          │          │  nile node   │    │     Hub      │
           │          │   :27017     │    │              │
           │          └──────────────┘    └──────────────┘
           │                                       │
@@ -397,7 +397,7 @@ python examples/python/event_monitor.py
 ┌──────────────────┐                  ┌──────────────────┐
 │   Tron Node      │                  │  Event Monitor   │
 │   (Nile Testnet) │                  │   (Python)       │
-│   nileVM.lan     │                  │                  │
+│   nile node      │                  │                  │
 │   :50051 (gRPC)  │                  │  - WebSocket     │
 └──────────────────┘                  │  - Display       │
                                       │  - File logging  │
@@ -434,4 +434,4 @@ After starting MongoTron:
 ---
 
 **Last Updated**: October 6, 2025  
-**Status**: ✅ Ready to use with MongoDB and Tron Nile testnet at nileVM.lan
+**Status**: ✅ Ready to use with MongoDB and Tron Nile testnet at nile-node.example.com
