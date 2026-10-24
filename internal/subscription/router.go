@@ -95,7 +95,8 @@ func (r *EventRouter) SetSubscriptionSecret(secret string) {
 	r.subscriptionSecret = secret
 }
 
-// SetNetwork sets the network name (tron-mainnet or tron-nile)
+// SetNetwork sets the network name (tron-mainnet or tron-nile): the label of Porto events, stored events and new
+// subscriptions.
 func (r *EventRouter) SetNetwork(network string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1287,9 +1288,25 @@ func (r *EventRouter) storeEvent(req *RouteEventRequest) {
 	if r.db == nil || r.db.EventRepo == nil {
 		return
 	}
-	event := &models.Event{
+	event := r.storedEvent(req)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := r.db.EventRepo.Create(ctx, event); err != nil {
+		r.logger.Error().
+			Err(err).
+			Str("subscriptionId", req.Subscription.SubscriptionID).
+			Str("txHash", req.Event.TransactionID).
+			Msg("Failed to store event")
+	}
+}
+
+// storedEvent is the event row storeEvent writes, labelled with the configured network.
+func (r *EventRouter) storedEvent(req *RouteEventRequest) *models.Event {
+	return &models.Event{
 		EventID:        fmt.Sprintf("evt_%s_%d", req.Event.TransactionID[:16], time.Now().UnixNano()),
-		Network:        "tron-nile", // TODO: Make configurable
+		Network:        r.networkName(),
 		Type:           req.Event.ContractType,
 		Address:        req.Subscription.Address,
 		TxHash:         req.Event.TransactionID,
@@ -1306,17 +1323,6 @@ func (r *EventRouter) storeEvent(req *RouteEventRequest) {
 		},
 		SubscriptionID: req.Subscription.SubscriptionID,
 		Processed:      false,
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := r.db.EventRepo.Create(ctx, event); err != nil {
-		r.logger.Error().
-			Err(err).
-			Str("subscriptionId", req.Subscription.SubscriptionID).
-			Str("txHash", req.Event.TransactionID).
-			Msg("Failed to store event")
 	}
 }
 
