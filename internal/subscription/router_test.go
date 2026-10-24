@@ -239,3 +239,19 @@ func TestHandleTRC20TransferMarksPayerSideOutgoing(t *testing.T) {
 		t.Errorf("payer-side event must be outgoing: %+v", ev)
 	}
 }
+
+func TestStoredEventCarriesTheConfiguredNetwork(t *testing.T) {
+	r := newTestRouter(t)
+	req := usdtTransferRequest(invoiceAdr)
+	if got := r.storedEvent(req).Network; got != "tron-nile" {
+		t.Errorf("default network = %q, want tron-nile", got)
+	}
+	r.SetNetwork("tron-mainnet")
+	ev := r.storedEvent(req)
+	if ev.Network != "tron-mainnet" {
+		t.Errorf("network = %q, want tron-mainnet", ev.Network)
+	}
+	if ev.Address != invoiceAdr || ev.TxHash != req.Event.TransactionID || ev.SubscriptionID != req.Subscription.SubscriptionID {
+		t.Errorf("unexpected row: %+v", ev)
+	}
+}

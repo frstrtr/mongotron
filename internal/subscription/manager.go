@@ -289,7 +289,7 @@ func (m *Manager) SubscribeWithOptions(opts SubscribeOptions) (*models.Subscript
 	sub := &models.Subscription{
 		SubscriptionID: subscriptionID,
 		Address:        opts.Address,
-		Network:        "tron-nile", // TODO: Make configurable
+		Network:        m.eventRouter.networkName(),
 		WebhookURL:     opts.WebhookURL,
 		Filters:        opts.Filters,
 		Status:         "active",

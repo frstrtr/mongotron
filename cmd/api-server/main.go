@@ -88,6 +88,12 @@ func main() {
 	// Per-subscription webhook posts are signed when a subscription secret is configured
 	router.SetSubscriptionSecret(cfg.Webhooks.SubscriptionSecret)
 
+	// webhooks.porto.network also labels stored events and new subscriptions, with or without Porto
+	// (unset with Porto off keeps the tron-nile default)
+	if cfg.Webhooks.Porto.Enabled || cfg.Webhooks.Porto.Network != "" {
+		router.SetNetwork(cfg.Webhooks.Porto.Network)
+	}
+
 	// Configure Porto API client if enabled
 	if cfg.Webhooks.Porto.Enabled {
 		portoClient := webhook.NewPortoAPIClient(
@@ -100,7 +106,6 @@ func main() {
 		portoClient.SetOperationPath(cfg.Webhooks.Porto.OperationPath)
 		portoClient.SetUsagePath(cfg.Webhooks.Porto.UsagePath)
 		router.SetPortoClient(portoClient)
-		router.SetNetwork(cfg.Webhooks.Porto.Network)
 		if cfg.Webhooks.Porto.UsageEnabled {
 			router.SetUsageEvents(cfg.Webhooks.Porto.UsageWalletTypes)
 		}
